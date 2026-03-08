@@ -1,0 +1,328 @@
+---
+title: "The Geometry of Optimization: Norms, Convexity, and Why Shape Matters"
+date: "2025-03-09"
+series: "Mathematics of Data"
+seriesIndex: 1
+description: "Before any algorithm runs, the geometry of the space you're optimizing over determines everything. This post builds that geometric intuition from the ground up — norms, dual norms, convexity, smoothness, and the condition number that will haunt every algorithm that follows."
+tags: ["optimization", "convexity", "linear-algebra", "foundations"]
+math: true
+---
+
+Every optimization algorithm lives inside a geometry. Before the first gradient is computed, before the first step is taken, the *shape* of the space and the *shape* of the function determine what is even possible. This post is about that shape.
+
+We will cover four ideas in sequence: the geometry of norms (and why the $\ell_1$ ball's pointy corners matter enormously), matrix norms and their analogies, the precise meaning of convexity and its characterizations, and the two structural properties — smoothness and strong convexity — that will govern every convergence rate in this series.
+
+---
+
+## 1. Vector Norms and Their Geometry
+
+### Definition
+
+A norm $\|\cdot\|$ on $\mathbb{R}^d$ is a function satisfying three axioms:
+
+1. **Positive definiteness**: $\|x\| \geq 0$, with equality iff $x = 0$
+2. **Absolute homogeneity**: $\|\alpha x\| = |\alpha| \|x\|$ for all $\alpha \in \mathbb{R}$
+3. **Triangle inequality**: $\|x + y\| \leq \|x\| + \|y\|$
+
+The family of $\ell_p$-norms provides a continuum of geometries:
+
+$$\|x\|_p = \left(\sum_{i=1}^d |x_i|^p\right)^{1/p}, \quad p \in [1, \infty)$$
+
+with the limiting case $\|x\|_\infty = \max_i |x_i|$.
+
+The three most important cases:
+
+- **$\ell_1$ (Manhattan)**: $\|x\|_1 = \sum_i |x_i|$
+- **$\ell_2$ (Euclidean)**: $\|x\|_2 = \sqrt{\sum_i x_i^2}$
+- **$\ell_\infty$ (Chebyshev)**: $\|x\|_\infty = \max_i |x_i|$
+
+### The Unit Ball Reveals the Geometry
+
+The unit ball $\mathcal{B}_p = \{x \in \mathbb{R}^2 : \|x\|_p \leq 1\}$ is the most direct way to see what a norm *looks like*. In two dimensions:
+
+```
+         ℓ₁ ball             ℓ₂ ball             ℓ∞ ball
+           (0,1)               (0,1)            (-1,1)──(1,1)
+            /\                  ╭─╮                |      |
+           /  \               ╭   ╮               |      |
+    (-1,0)╳    ╳(1,0)       (─     ─)          (-1,-1)─(1,-1)
+           \  /               ╰   ╯
+            \/                  ╰─╯
+           (0,-1)              (0,-1)
+         Diamond             Circle             Square
+```
+
+These shapes are not just visual curiosities. They encode fundamentally different notions of "small."
+
+### Why the $\ell_1$ Ball Produces Sparse Solutions
+
+This is one of the most important geometric insights in all of machine learning, and it is elementary once you see it.
+
+Consider the constrained optimization problem:
+
+$$\min_{x \in \mathbb{R}^2} f(x) \quad \text{subject to} \quad \|x\|_1 \leq \tau$$
+
+Imagine the level curves of $f$ — ellipses if $f$ is a smooth convex function — shrinking inward toward the unconstrained minimum. The constrained minimum is the *first point where a level curve touches the $\ell_1$ ball*.
+
+Now look at the $\ell_1$ ball. It has four corners: $({\pm}\tau, 0)$ and $(0, {\pm}\tau)$. These corners sit on the coordinate axes. A generic level curve will almost certainly hit a corner before it hits an edge. At a corner, one or more coordinates are exactly zero.
+
+For the $\ell_2$ ball (a circle), there are no corners — the boundary is smooth everywhere, and the first contact point is generically interior to all coordinate hyperplanes. No sparsity.
+
+This is the entire geometric explanation for why $\ell_1$ regularization (Lasso) induces sparsity. No probabilistic argument, no Bayesian prior needed — it is pure geometry. In higher dimensions, the $\ell_1$ ball is a cross-polytope whose $2d$ vertices all lie on coordinate axes, amplifying this effect.
+
+### Dual Norms
+
+Given a norm $\|\cdot\|$, its **dual norm** is:
+
+$$\|y\|_* = \sup_{\|x\| \leq 1} \langle x, y \rangle$$
+
+The dual norm measures how well $y$ can extract value from the unit ball of $\|\cdot\|$ — the maximum inner product achievable by a unit-norm vector.
+
+**Claim**: The dual of $\ell_p$ is $\ell_q$ where $\frac{1}{p} + \frac{1}{q} = 1$. In particular:
+- The dual of $\ell_1$ is $\ell_\infty$
+- The dual of $\ell_\infty$ is $\ell_1$
+- The dual of $\ell_2$ is $\ell_2$ (self-dual)
+
+This follows from **Hölder's inequality**, which we now prove.
+
+**Theorem (Hölder's Inequality)**: For $\frac{1}{p} + \frac{1}{q} = 1$ with $p, q \geq 1$:
+
+$$|\langle x, y \rangle| \leq \|x\|_p \|y\|_q$$
+
+*Proof.* If either side is zero, the result is immediate. Otherwise, by homogeneity we may assume $\|x\|_p = \|y\|_q = 1$. We need to show $\sum_i |x_i y_i| \leq 1$.
+
+Apply **Young's inequality**: for $a, b \geq 0$ and $\frac{1}{p} + \frac{1}{q} = 1$,
+$$ab \leq \frac{a^p}{p} + \frac{b^q}{q}$$
+
+This follows from the concavity of $\log$: $\log\!\left(\frac{a^p}{p} + \frac{b^q}{q}\right) \geq \frac{1}{p}\log(a^p) + \frac{1}{q}\log(b^q) = \log(ab)$, so $\frac{a^p}{p} + \frac{b^q}{q} \geq ab$.
+
+Applying Young's to each term:
+
+$$\sum_i |x_i||y_i| \leq \sum_i \left(\frac{|x_i|^p}{p} + \frac{|y_i|^q}{q}\right) = \frac{\|x\|_p^p}{p} + \frac{\|y\|_q^q}{q} = \frac{1}{p} + \frac{1}{q} = 1 \qquad \square$$
+
+**Deriving the dual of $\ell_1$**: We want to compute $\sup_{\|x\|_1 \leq 1} \langle x, y \rangle$.
+
+$$\langle x, y \rangle = \sum_i x_i y_i \leq \sum_i |x_i| |y_i| \leq \max_j |y_j| \cdot \sum_i |x_i| \leq \|y\|_\infty \cdot \|x\|_1 \leq \|y\|_\infty$$
+
+The bound is achieved by setting $x = e_j$ where $j = \arg\max_i |y_i|$ (and adjusting sign). So $\|y\|_{1,*} = \|y\|_\infty$. $\square$
+
+Dual norms appear constantly in analysis — whenever you bound an inner product $\langle g, d \rangle$ (e.g., gradient times step direction), Hölder gives you $|\langle g, d \rangle| \leq \|g\|_* \|d\|$. The primal and dual norms are always the right pairing for this.
+
+---
+
+## 2. Matrix Norms
+
+Vectors are matrices, so norms extend. Three matrix norms will appear throughout this series.
+
+### Frobenius Norm
+
+$$\|A\|_F = \sqrt{\sum_{i,j} a_{ij}^2} = \sqrt{\operatorname{tr}(A^T A)}$$
+
+This is simply the $\ell_2$ norm of the vectorized matrix. It treats the matrix as a flat bag of numbers. Differentiating through $\|A\|_F^2$ is easy: $\nabla_A \|A\|_F^2 = 2A$.
+
+### Spectral Norm
+
+$$\|A\|_2 = \sigma_{\max}(A) = \sqrt{\lambda_{\max}(A^T A)}$$
+
+where $\sigma_{\max}$ is the largest singular value of $A$. This is the operator norm for $\ell_2$ vectors: $\|A\|_2 = \sup_{\|x\|_2 = 1} \|Ax\|_2$. It measures the maximum "stretch" the matrix applies.
+
+The spectral norm is the dual of the nuclear norm (defined below) — a fact that parallels $\ell_1$/$\ell_\infty$ duality.
+
+### Nuclear Norm
+
+$$\|A\|_* = \sum_i \sigma_i(A)$$
+
+the sum of all singular values. This is the matrix analogue of the $\ell_1$ norm — and the analogy is exact.
+
+Just as the $\ell_1$ norm promotes *sparsity* in vectors, the nuclear norm promotes *low rank* in matrices. The singular values of $A$ are the "coordinates" in the spectral domain. Minimizing their $\ell_1$ sum drives small singular values to zero, reducing the effective rank.
+
+The parallel:
+
+| Vector world | Matrix world |
+|---|---|
+| $\ell_1$ norm: $\sum_i \|x_i\|$ | Nuclear norm: $\sum_i \sigma_i(A)$ |
+| Promotes sparse $x$ | Promotes low-rank $A$ |
+| Geometric: corners on coordinate axes | Geometric: corners in spectral domain |
+| Used in: Lasso, compressed sensing | Used in: matrix completion, recommendation |
+
+The proximal operator of the nuclear norm is singular value soft-thresholding — the matrix analogue of the scalar soft-threshold from Lasso. We will encounter this in Post 6.
+
+---
+
+## 3. Convex Sets and Functions
+
+### Convex Sets
+
+A set $C \subseteq \mathbb{R}^d$ is **convex** if for all $x, y \in C$ and $\lambda \in [0, 1]$:
+
+$$\lambda x + (1-\lambda)y \in C$$
+
+In words: the line segment between any two points in $C$ stays inside $C$. Balls are convex. Polytopes are convex. Non-convex: donuts, stars, any set with a "dent."
+
+The $\ell_p$ unit balls $\mathcal{B}_p$ for $p \geq 1$ are all convex. (For $p < 1$, the "norm" is no longer a norm — it violates the triangle inequality — and the unit ball is non-convex with an inward-bowing boundary.)
+
+### Convex Functions
+
+A function $f: C \to \mathbb{R}$ is **convex** if for all $x, y \in C$ and $\lambda \in [0,1]$:
+
+$$f(\lambda x + (1-\lambda)y) \leq \lambda f(x) + (1-\lambda)f(y)$$
+
+The function value at any convex combination of two points lies *below or on* the chord connecting them. Visually: the function lies below all its secant lines.
+
+Convexity is the "holy grail" of optimization for one overwhelming reason: **every local minimum is a global minimum**. 
+
+*Proof*: Suppose $x^*$ is a local minimum but not global. Then there exists $z$ with $f(z) < f(x^*)$. By convexity, $f(\lambda z + (1-\lambda)x^*) \leq \lambda f(z) + (1-\lambda)f(x^*) < f(x^*)$ for all $\lambda \in (0,1]$. But points $\lambda z + (1-\lambda)x^*$ can be made arbitrarily close to $x^*$ (take $\lambda \to 0$), contradicting $x^*$ being a local minimum. $\square$
+
+### First-Order Characterization
+
+**Theorem**: A differentiable function $f$ is convex iff for all $x, y$:
+
+$$f(y) \geq f(x) + \nabla f(x)^T(y - x)$$
+
+The tangent plane (or hyperplane in higher dimensions) is a *global lower bound* everywhere. This is a remarkable property — local linear information (the gradient at $x$) tells you something true everywhere.
+
+*Proof* ($\Rightarrow$): Fix $x, y$. By convexity, for any $t \in (0,1]$:
+
+$$f(x + t(y-x)) \leq (1-t)f(x) + t f(y)$$
+
+Rearranging: $f(y) \geq f(x) + \frac{f(x + t(y-x)) - f(x)}{t}$.
+
+Taking $t \to 0^+$, the right side converges to $f(x) + \nabla f(x)^T(y-x)$. $\square$
+
+*Proof* ($\Leftarrow$): Suppose the tangent lower bound holds. For $z = \lambda x + (1-\lambda)y$:
+
+$$f(x) \geq f(z) + \nabla f(z)^T(x - z)$$
+$$f(y) \geq f(z) + \nabla f(z)^T(y - z)$$
+
+Multiply the first by $\lambda$, the second by $(1-\lambda)$, add:
+
+$$\lambda f(x) + (1-\lambda)f(y) \geq f(z) + \nabla f(z)^T(\lambda(x-z) + (1-\lambda)(y-z))$$
+
+Since $z = \lambda x + (1-\lambda)y$, we have $\lambda(x-z) + (1-\lambda)(y-z) = 0$. So:
+
+$$\lambda f(x) + (1-\lambda)f(y) \geq f(z) = f(\lambda x + (1-\lambda)y) \qquad \square$$
+
+The first-order condition has an immediate and crucial consequence: if $\nabla f(x^*) = 0$, then for all $y$: $f(y) \geq f(x^*) + 0 = f(x^*)$. So **any stationary point of a convex function is a global minimum**. This is why checking $\nabla f = 0$ is sufficient for convex problems.
+
+### Second-Order Characterization
+
+**Theorem**: A twice-differentiable function $f$ is convex iff for all $x$:
+
+$$\nabla^2 f(x) \succeq 0$$
+
+where $\succeq 0$ means the Hessian matrix is **positive semi-definite (PSD)**.
+
+A symmetric matrix $H$ is PSD iff any of these equivalent conditions hold:
+- All eigenvalues $\lambda_i \geq 0$
+- $v^T H v \geq 0$ for all $v \in \mathbb{R}^d$
+- $H = A^T A$ for some matrix $A$
+
+Geometrically: $v^T \nabla^2 f(x) v$ is the second directional derivative of $f$ in direction $v$ at $x$. Requiring it to be non-negative for all $v$ means the function curves *upward* in every direction — no concave dip anywhere.
+
+A few examples:
+- $f(x) = \|x\|_2^2 = x^T x$: Hessian is $2I \succ 0$ — strictly PSD, strictly convex.
+- $f(x) = \max_i x_i$: not differentiable everywhere, but convex. Second-order characterization applies where $f$ is $C^2$.
+- $f(x) = x_1^2 - x_2^2$: Hessian is $\text{diag}(2, -2)$, indefinite. Not convex.
+
+---
+
+## 4. $L$-Smoothness and $\mu$-Strong Convexity
+
+Convexity alone is not enough to derive fast convergence rates. Two additional structural conditions — smoothness and strong convexity — will appear in every theorem of this series.
+
+### $L$-Smoothness: Bounding the Gradient's Variation
+
+A differentiable function $f$ is **$L$-smooth** if its gradient is $L$-Lipschitz:
+
+$$\|\nabla f(x) - \nabla f(y)\|_2 \leq L \|x - y\|_2 \quad \forall x, y$$
+
+This says the gradient cannot change too rapidly. Equivalently, $\nabla^2 f(x) \preceq LI$ everywhere (all eigenvalues of the Hessian are at most $L$).
+
+**Lemma (Descent Lemma)**: If $f$ is $L$-smooth, then for all $x, y$:
+
+$$f(y) \leq f(x) + \nabla f(x)^T(y - x) + \frac{L}{2}\|y - x\|_2^2$$
+
+*Proof.* By the fundamental theorem of calculus and Cauchy-Schwarz:
+
+$$f(y) - f(x) - \nabla f(x)^T(y-x) = \int_0^1 [\nabla f(x + t(y-x)) - \nabla f(x)]^T (y-x)\, dt$$
+
+$$\leq \int_0^1 \|\nabla f(x + t(y-x)) - \nabla f(x)\|_2 \|y-x\|_2\, dt$$
+
+Applying $L$-smoothness to $\|\nabla f(x + t(y-x)) - \nabla f(x)\|_2 \leq L \cdot t\|y-x\|_2$:
+
+$$\leq \int_0^1 L \cdot t \|y-x\|_2^2\, dt = \frac{L}{2}\|y-x\|_2^2 \qquad \square$$
+
+Geometrically: a smooth function is *sandwiched above* by a quadratic with curvature $L$. This quadratic upper bound is the workhorse of gradient descent analysis — we will use it in the next post to prove the descent lemma and derive optimal step sizes.
+
+### $\mu$-Strong Convexity: Bounding Curvature From Below
+
+A function $f$ is **$\mu$-strongly convex** ($\mu > 0$) if for all $x, y$:
+
+$$f(y) \geq f(x) + \nabla f(x)^T(y - x) + \frac{\mu}{2}\|y - x\|_2^2$$
+
+This strengthens the first-order convexity condition: the tangent plane lower bound is replaced by a tighter quadratic lower bound. Equivalently, $\nabla^2 f(x) \succeq \mu I$ everywhere — all eigenvalues of the Hessian are at least $\mu$.
+
+If $f$ is $\mu$-strongly convex, then $f(x) - \frac{\mu}{2}\|x\|^2$ is convex. Strong convexity means $f$ curves upward by *at least* $\mu$ in every direction.
+
+Strong convexity guarantees a **unique** global minimum. If $\nabla f(x^*) = 0$ and $f$ is $\mu$-SC, then for all $y \neq x^*$: $f(y) \geq f(x^*) + \frac{\mu}{2}\|y - x^*\|^2 > f(x^*)$.
+
+### The Sandwich: When Both Hold
+
+When $f$ is both $L$-smooth and $\mu$-strongly convex (with $0 < \mu \leq L$), the function is sandwiched between two paraboloids:
+
+$$f(x) + \nabla f(x)^T(y-x) + \frac{\mu}{2}\|y-x\|^2 \;\leq\; f(y) \;\leq\; f(x) + \nabla f(x)^T(y-x) + \frac{L}{2}\|y-x\|^2$$
+
+For the gradients, this sandwich implies:
+
+$$\mu \|x - y\|^2 \leq (\nabla f(x) - \nabla f(y))^T(x - y) \leq L\|x-y\|^2$$
+
+The left inequality is the *co-coercivity* condition. It says the gradient doesn't just change in the right direction — it changes by at least $\mu$ per unit of displacement. This will be the key estimate in proving linear convergence of gradient descent.
+
+**Example**: The quadratic $f(x) = \frac{1}{2}x^T A x - b^T x$ with $\mu I \preceq A \preceq LI$ is $\mu$-SC and $L$-smooth with $\mu = \lambda_{\min}(A)$, $L = \lambda_{\max}(A)$.
+
+### The Condition Number
+
+The ratio
+
+$$\kappa = \frac{L}{\mu}$$
+
+is the **condition number** of the optimization problem. It is one of the most important quantities in numerical optimization.
+
+When $\kappa$ is small (close to 1), the function is nearly spherical — level sets are nearly round balls, and gradient descent finds the minimum quickly in any direction.
+
+When $\kappa$ is large, the level sets are elongated ellipsoids. The gradient points in a very different direction from the minimum. Gradient descent zig-zags: it overshoots in the steep direction while barely moving in the flat direction.
+
+```
+         κ ≈ 1               κ ≫ 1
+        (nice bowl)         (narrow valley)
+
+         ╭──╮                 ───────
+        ╭    ╮              ─────────
+       ╭      ╮            ─────────────
+       ╰      ╯            ─────────────
+        ╰    ╯              ─────────
+         ╰──╯                 ───────
+```
+
+Concretely: gradient descent on a $\mu$-SC, $L$-smooth function needs $O(\kappa \log(1/\epsilon))$ iterations to reach $\epsilon$-accuracy. When $\kappa = 1000$, that is $7000$ iterations to reach error $10^{-3}$, versus just $7$ for a well-conditioned problem.
+
+Every algorithm in this series — from Nesterov acceleration to SVRG — is, at its core, trying to reduce the dependence on $\kappa$.
+
+---
+
+## Looking Forward
+
+We have built the geometric vocabulary for the entire series:
+
+- **Norms** give us ways to measure distance and size; the $\ell_1$ norm's geometry explains sparsity
+- **Dual norms** and Hölder's inequality give us the right way to bound inner products
+- **Matrix norms** extend the story to linear operators; nuclear norm is $\ell_1$ for singular values
+- **Convexity** ensures local minima are global; the first-order condition makes gradients globally informative
+- **$L$-smoothness** and **$\mu$-strong convexity** quantify how curved the function is, from above and below
+- **The condition number $\kappa = L/\mu$** is the single number that will appear in every convergence theorem
+
+The next post puts these tools to work: we derive the gradient descent algorithm from the descent lemma and prove, carefully, that it converges at rate $O(1/k)$ for smooth convex functions and at a linear rate for strongly convex ones — and explain exactly why the condition number is the bottleneck.
+
+---
+
+*This post is part of a series of mathematical notes on EE-556: Mathematics of Data (EPFL). The series covers optimization theory from first principles through modern deep learning.*

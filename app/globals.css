@@ -1,0 +1,31 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+    --font-fraunces: "Fraunces", serif;
+    --font-dm-mono: "DM Mono", monospace;
+    --font-lora: "Lora", serif;
+
+    --color-cream: #faf8f4;
+    --color-ink: #1c1c1c;
+    --color-accent: #b08b5a;
+    --color-muted: #888888;
+    --color-border: #e8e2d8;
+}
+
+html {
+    background-color: var(--color-cream);
+    color: var(--color-ink);
+    scroll-behavior: smooth;
+}
+
+body {
+    font-family: var(--font-lora);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.math-display {
+    overflow-x: auto;
+    padding: 1rem 0;
+}

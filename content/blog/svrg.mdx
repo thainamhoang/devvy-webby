@@ -1,0 +1,179 @@
+---
+title: "Variance Reduction: Getting Linear Convergence for Free with SVRG"
+date: "2025-03-13"
+series: "Mathematics of Data"
+seriesIndex: 5
+description: "SGD is cheap but noisy; full GD is exact but expensive. SVRG achieves the best of both — linear convergence at near-SGD cost — by using a snapshot gradient to correct the stochastic noise. This post derives the variance bound and convergence theorem from scratch."
+tags: ["optimization", "variance-reduction", "svrg", "convergence"]
+math: true
+---
+
+Post 4 ended with a tension that deserves a resolution.
+
+Full GD achieves linear convergence — error decaying as $(1-1/\kappa)^k$ — but costs $O(n)$ per step. SGD costs $O(1)$ per step but the variance forces the rate back down to $O(1/k)$. For large $n$ and large $\kappa$, neither is satisfying.
+
+The question Post 4 raised: can we get $O(1)$ cost per step *and* linear convergence?
+
+SVRG (Stochastic Variance Reduced Gradient, Johnson & Zhang 2013) answers yes. The idea is elegant: use a periodically-computed full gradient as a correction signal that drives the stochastic variance to zero as the algorithm converges. The noise doesn't just average out — it *self-destructs*.
+
+---
+
+## 1. Why the Variance Prevents Linear Convergence
+
+Recall from Post 4: for $\mu$-strongly convex $f$, the per-step progress of SGD satisfies:
+
+$$\mathbb{E}[\|x^{k+1} - x^*\|^2] \leq (1 - \mu\alpha)\|x^k - x^*\|^2 + \alpha^2 \sigma^2$$
+
+The first term is the contractive progress from strong convexity — it would give linear convergence on its own. The second term is the variance penalty from the stochastic gradient noise.
+
+With fixed $\alpha$, the iteration converges to a ball of radius $\frac{\alpha \sigma^2}{\mu}$ around $x^*$, not to $x^*$ itself. To make this ball shrink to zero, we need $\alpha \to 0$ — which kills the linear rate in the first term.
+
+The fix must address the source: make $\sigma^2$ itself go to zero as $x^k \to x^*$, even with fixed $\alpha$.
+
+---
+
+## 2. The SVRG Update
+
+SVRG operates in **epochs**. At the start of epoch $s$, pick a snapshot point $\tilde{x}$ (typically the last iterate or an average of last epoch's iterates) and compute the full gradient:
+
+$$\tilde{\mu} = \nabla f(\tilde{x}) = \frac{1}{n}\sum_{i=1}^n \nabla f_i(\tilde{x})$$
+
+This costs $O(n)$ — one full pass over the data.
+
+Then run $m$ inner steps. At each inner step $k$, sample $i_k \sim \text{Uniform}\{1,\ldots,n\}$ and update:
+
+$$x^{k+1} = x^k - \alpha \underbrace{\left[\nabla f_{i_k}(x^k) - \nabla f_{i_k}(\tilde{x}) + \tilde{\mu}\right]}_{v^k}$$
+
+The corrected gradient $v^k$ is the key object. It looks like SGD but with a correction term $-\nabla f_{i_k}(\tilde{x}) + \tilde{\mu}$ added.
+
+**Why is this correction the right one?** Let's check two properties.
+
+### Unbiasedness
+
+$$\mathbb{E}_{i_k}[v^k] = \mathbb{E}_{i_k}[\nabla f_{i_k}(x^k)] - \mathbb{E}_{i_k}[\nabla f_{i_k}(\tilde{x})] + \tilde{\mu}$$
+
+$$= \nabla f(x^k) - \nabla f(\tilde{x}) + \nabla f(\tilde{x}) = \nabla f(x^k) \checkmark$$
+
+$v^k$ is an unbiased estimate of $\nabla f(x^k)$, just like the plain SGD gradient. So the update is still valid.
+
+### Variance Goes to Zero
+
+Now the key calculation. The variance of $v^k$:
+
+$$\mathbb{E}[\|v^k - \nabla f(x^k)\|^2] = \mathbb{E}[\|\nabla f_{i_k}(x^k) - \nabla f_{i_k}(\tilde{x}) + \tilde{\mu} - \nabla f(x^k)\|^2]$$
+
+$$= \mathbb{E}[\|(\nabla f_{i_k}(x^k) - \nabla f(x^k)) - (\nabla f_{i_k}(\tilde{x}) - \nabla f(\tilde{x}))\|^2]$$
+
+Using $\|a - b\|^2 \leq 2\|a\|^2 + 2\|b\|^2$:
+
+$$\leq 2\mathbb{E}[\|\nabla f_{i_k}(x^k) - \nabla f(x^k)\|^2] + 2\mathbb{E}[\|\nabla f_{i_k}(\tilde{x}) - \nabla f(\tilde{x})\|^2]$$
+
+For $L$-smooth functions, there is a useful variance bound: for any $x$,
+
+$$\mathbb{E}_i[\|\nabla f_i(x) - \nabla f(x)\|^2] \leq 2L(f(x) - f^*)$$
+
+This follows from the smoothness of each $f_i$ and the fact that $\nabla f_i(x^*) $ averages to $\nabla f(x^*) = 0$.
+
+Applying this to both terms:
+
+$$\boxed{\mathbb{E}[\|v^k - \nabla f(x^k)\|^2] \leq 4L(f(x^k) - f^*) + 4L(f(\tilde{x}) - f^*)}$$
+
+This is the central estimate of SVRG. The variance is not a fixed constant $\sigma^2$ — it is proportional to the *suboptimality* at the current point and at the snapshot. As $x^k \to x^*$ and $\tilde{x} \to x^*$, both terms go to zero. The noise self-corrects.
+
+This is the mechanism that breaks the SGD barrier: unlike plain SGD whose noise floor is a fixed $\sigma^2$, SVRG's effective noise shrinks with the algorithm's progress.
+
+---
+
+## 3. Convergence Theorem
+
+**Theorem (SVRG Linear Convergence):** Let $f$ be $L$-smooth and $\mu$-strongly convex. Run SVRG with epoch length $m$, step size $\alpha < \frac{1}{4L}$, and set the next snapshot $\tilde{x}^{s+1}$ to a uniformly random iterate from epoch $s$. Then:
+
+$$\mathbb{E}[f(\tilde{x}^s) - f^*] \leq \rho^s (f(\tilde{x}^0) - f^*)$$
+
+where
+
+$$\rho = \frac{1}{\mu\alpha(1 - 2L\alpha)m} + \frac{2L\alpha}{1 - 2L\alpha}$$
+
+For $\rho < 1$, choose $m = \frac{20L}{\mu} = 20\kappa$ and $\alpha = \frac{1}{10L}$. Then:
+
+$$\rho \leq \frac{1}{2\kappa \cdot \frac{1}{10L} \cdot \frac{4}{5} \cdot 20\kappa} + \frac{\frac{2}{10}}{1 - \frac{2}{10}} = \frac{1}{4} + \frac{1}{4} = \frac{1}{2}$$
+
+A contraction factor of $\rho = 1/2$ per epoch regardless of $\kappa$.
+
+*Proof sketch.* Track $\mathbb{E}[\|x^{k+1} - x^*\|^2]$ for one inner step. Expand using the SVRG update, then apply:
+
+1. Strong convexity to bound $\nabla f(x^k)^T(x^k - x^*)$
+2. The variance bound from Section 2 to control the noise term
+3. The per-step inequality: $\mathbb{E}[\|x^{k+1} - x^*\|^2] \leq (1-2\mu\alpha)\|x^k-x^*\|^2 + 2\alpha^2\left[4L(f(x^k)-f^*)+4L(f(\tilde{x})-f^*)\right]$
+
+The variance bound connects the noise to suboptimality, which connects to distance via strong convexity. This closes the loop: the contraction in distance-to-optimum drives down the variance, which drives down the distance further.
+
+Summing over $m$ inner steps, taking expectation over the random snapshot selection, and rearranging gives the epoch-level contraction $\rho$. $\square$
+
+---
+
+## 4. Cost Comparison: The Payoff
+
+Let's count total gradient evaluations to reach $\epsilon$-accuracy.
+
+**Epoch cost for SVRG:**
+- Snapshot gradient: $n$ evaluations (one full pass)
+- Inner loop of $m = 20\kappa$ steps: $20\kappa$ evaluations (each step samples one $\nabla f_i$)
+- Total per epoch: $n + 20\kappa$
+
+**Epochs to $\epsilon$-accuracy:**
+Since $\rho \leq 1/2$, after $s$ epochs error $\leq (1/2)^s \cdot \text{initial error}$. To reach $\epsilon$ from initial error $\Delta$: $s = \log_2(\Delta/\epsilon) = O(\log(1/\epsilon))$ epochs.
+
+**Total gradient evaluations for SVRG:**
+$$O\!\left((n + \kappa)\log\frac{1}{\epsilon}\right)$$
+
+**Compare to full GD:**
+GD needs $O(\kappa)$ steps, each costing $O(n)$ evaluations:
+$$O\!\left(n\kappa \log\frac{1}{\epsilon}\right)$$
+
+**Compare to SGD:**
+SGD with rate $O(1/k)$ needs $O(1/\epsilon)$ steps of $O(1)$ cost:
+$$O\!\left(\frac{1}{\epsilon}\right)$$
+
+| Method | Total gradient evals | Linear rate? |
+|---|---|---|
+| GD | $O(n\kappa \log 1/\epsilon)$ | Yes |
+| SGD | $O(1/\epsilon)$ | No |
+| SVRG | $O((n+\kappa)\log 1/\epsilon)$ | Yes |
+
+SVRG achieves linear convergence (like GD) with a factor of $n + \kappa$ instead of $n\kappa$. When $\kappa \gg 1$ — the regime where GD is slow — SVRG outperforms GD by a factor of $\frac{n\kappa}{n+\kappa} \approx \frac{n\kappa}{\kappa} = n$ when $\kappa \gg n$, or $\frac{n\kappa}{n} = \kappa$ when $n \gg \kappa$.
+
+Concretely: $n = 10^6$ data points, $\kappa = 10^3$, target $\epsilon = 10^{-6}$:
+- GD: $10^6 \times 10^3 \times 14 \approx 1.4 \times 10^{10}$ evaluations
+- SVRG: $(10^6 + 10^3) \times 14 \approx 1.4 \times 10^7$ evaluations
+
+**SVRG is 1000x cheaper.** With identical convergence guarantees.
+
+---
+
+## 5. Continual Learning Extension: CSVRG
+
+SVRG assumes a fixed dataset $\{f_1, \ldots, f_n\}$. In many modern settings — online learning, continual learning, streaming data — new data points arrive over time and the model must update without forgetting old knowledge.
+
+The naive approach: when $f_{n+1}$ arrives, re-run SVRG from scratch on $\{f_1, \ldots, f_{n+1}\}$. Cost: $O(n+1)$ per epoch. For a stream of $T$ new points, total cost $O(Tn)$ — quadratic in the total data.
+
+**CSVRG** (Continual SVRG) addresses this by maintaining a *stale snapshot* $\tilde{\mu}$ that is updated incrementally. When $f_{n+1}$ arrives:
+
+1. Update the snapshot gradient: $\tilde{\mu}^{\text{new}} = \frac{n\tilde{\mu} + \nabla f_{n+1}(\tilde{x})}{n+1}$ — a rank-1 update, $O(1)$ cost
+2. Continue running SVRG inner steps, now with the updated $\tilde{\mu}^{\text{new}}$
+
+The staleness of $\tilde{\mu}$ introduces a bounded extra variance term that degrades gracefully — the convergence rate remains linear with a slightly worse constant that shrinks as the model reprocesses old data.
+
+CSVRG trades exact variance reduction for memory efficiency. It is the right tool when data arrives faster than you can take full passes, and is one of several variance-reduced methods finding application in federated learning (where clients have local data and cannot share raw gradients).
+
+---
+
+## Where We Stand
+
+SVRG closes the loop opened in Post 4. The tension between cost and convergence rate — which seemed fundamental to stochastic optimization — is resolved by exploiting the finite-sum structure. The variance is not an intrinsic property of the problem; it is a property of the estimator, and a cleverer estimator eliminates it.
+
+The next post turns to a different structural challenge: what happens when the objective is not even differentiable? The Lasso, total variation regularization, and group sparsity penalties all have kinks. Subgradients are the right generalization of gradients in this world — and the proximal operator is the right generalization of the gradient step.
+
+---
+
+*Part of the Mathematics of Data series — mathematical notes on EE-556 at EPFL.*

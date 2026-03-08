@@ -1,0 +1,174 @@
+---
+title: "Stochastic Gradient Descent: Speed, Noise, and the Learning Rate Dilemma"
+date: "2025-03-12"
+series: "Mathematics of Data"
+seriesIndex: 4
+description: "When your dataset has a billion points, computing a full gradient is impossible. SGD trades exactness for speed — this post derives exactly what that trade-off costs, why variance is the fundamental obstacle, and what iterate averaging buys you."
+tags: ["optimization", "sgd", "stochastic", "convergence"]
+math: true
+---
+
+The previous posts assumed we could evaluate $\nabla f(x)$ exactly at each step. In modern machine learning, this assumption fails catastrophically.
+
+A typical loss function looks like:
+
+$$f(x) = \frac{1}{n} \sum_{i=1}^n f_i(x)$$
+
+where $n$ might be $10^8$ training examples and each $f_i$ is the loss on a single data point. Computing the full gradient $\nabla f(x) = \frac{1}{n}\sum_{i=1}^n \nabla f_i(x)$ requires one forward-backward pass over the entire dataset. At the scale of modern training, this is hours per step.
+
+Stochastic Gradient Descent (SGD) escapes this by never computing the full gradient at all.
+
+---
+
+## 1. The Finite-Sum Structure
+
+Every supervised learning objective has the finite-sum structure:
+
+$$\min_{x \in \mathbb{R}^d} f(x) = \frac{1}{n} \sum_{i=1}^n f_i(x)$$
+
+where $f_i(x) = \ell(h(x; \xi_i), y_i)$ is the loss on the $i$-th training example $\xi_i$ with label $y_i$.
+
+**Full Gradient Descent** computes $\nabla f(x^k) = \frac{1}{n}\sum_{i=1}^n \nabla f_i(x^k)$ at each step. Cost: $O(n)$ gradient evaluations per step.
+
+**SGD** instead samples a random index $i_k \sim \text{Uniform}\{1, \ldots, n\}$ and uses:
+
+$$x^{k+1} = x^k - \alpha_k \nabla f_{i_k}(x^k)$$
+
+Cost: $O(1)$ gradient evaluation per step. $n$ times cheaper.
+
+The key property that makes this sensible is **unbiasedness**:
+
+$$\mathbb{E}_{i_k}[\nabla f_{i_k}(x^k)] = \frac{1}{n}\sum_{i=1}^n \nabla f_i(x^k) = \nabla f(x^k)$$
+
+In expectation, the stochastic gradient equals the true gradient. SGD is gradient descent with noise added — and the noise is zero-mean.
+
+---
+
+## 2. Variance is the Problem
+
+The fact that $\mathbb{E}[g^k] = \nabla f(x^k)$ is reassuring. But the **variance** is what causes trouble.
+
+Define:
+
+$$\sigma^2 = \mathbb{E}_{i}\left[\|\nabla f_i(x) - \nabla f(x)\|^2\right]$$
+
+This measures how much individual gradients deviate from the true gradient. It is bounded for well-behaved problems and typically does not go to zero as $x \to x^*$ (the noise persists even at the optimum, because different data points give different gradient signals).
+
+### Fixed Step Size Does Not Converge
+
+With a fixed step size $\alpha$, SGD does not converge to $x^*$. Instead, it oscillates in a neighborhood around $x^*$ of radius proportional to $\alpha \sigma$.
+
+To see why: near $x^*$, the true gradient $\nabla f(x)$ is small (close to zero). But the stochastic gradient $\nabla f_{i_k}(x)$ still has variance $\sigma^2$ — it pushes the iterate in random directions even when we are already close. With fixed $\alpha$, these random kicks never diminish, so the iterate keeps bouncing.
+
+```
+      Fixed α:                  Decaying αₖ:
+      
+      ╭──────╮                     ╭──╮
+  ~~~~│  x*  │~~~~              ~~~│x*│
+      ╰──────╯                     ╰──╯
+   (orbit, never stops)         (spiral in)
+```
+
+### Decaying Step Size Forces Convergence
+
+To guarantee convergence, we must decay $\alpha_k \to 0$. The classical condition (Robbins-Monro):
+
+$$\sum_{k=0}^\infty \alpha_k = \infty \qquad \text{and} \qquad \sum_{k=0}^\infty \alpha_k^2 < \infty$$
+
+The first condition ensures we can still reach $x^*$ from anywhere (steps don't shrink too fast). The second ensures the cumulative noise vanishes (steps shrink fast enough that variance accumulates to a finite total).
+
+The standard choice satisfying both: $\alpha_k = \frac{c}{\sqrt{k}}$ or $\alpha_k = \frac{c}{k}$.
+
+### Convergence Theorem (Strongly Convex)
+
+**Theorem:** For $L$-smooth $\mu$-strongly convex $f$ with SGD using $\alpha_k = \frac{c}{k}$ where $c > \frac{1}{2\mu}$:
+
+$$\mathbb{E}[f(x^k) - f^*] \leq \frac{C}{k}$$
+
+where $C$ depends on $c$, $\mu$, $\sigma^2$, and $\|x^0 - x^*\|$.
+
+This is $O(1/k)$ — the same rate as GD on a merely convex function, *despite* strong convexity. The noise has erased the linear rate we worked hard to establish in Post 2. Full GD on the same problem achieves linear rate $O((1-1/\kappa)^k)$ — exponentially faster.
+
+The loss of linear rate is the direct price of variance. And it is not avoidable with vanilla SGD — it is a fundamental consequence of the noise floor $\sigma^2 > 0$.
+
+---
+
+## 3. Mini-Batching: A Partial Fix
+
+Instead of a single sample, use a **mini-batch** $B_k$ of $b$ random indices:
+
+$$g^k = \frac{1}{b} \sum_{i \in B_k} \nabla f_i(x^k)$$
+
+The expectation is still $\nabla f(x^k)$. The variance reduces by a factor of $b$:
+
+$$\text{Var}(g^k) = \frac{\sigma^2}{b}$$
+
+This follows directly from the variance of an average of i.i.d. random variables.
+
+The cost per step is $O(b)$ gradient evaluations. So mini-batching trades compute for variance reduction at a 1:1 ratio — doubling the batch halves variance but doubles cost per step.
+
+**Is it worth it?** Only up to a point. Consider the total gradient evaluations needed to reach $\epsilon$-accuracy:
+
+- Single sample ($b=1$): $O(1/\epsilon)$ steps, $O(1)$ cost each → $O(1/\epsilon)$ total evaluations
+- Batch size $b$: $O(1/\epsilon)$ steps (same rate, variance scaled), $O(b)$ cost each → $O(b/\epsilon)$ total evaluations
+
+Mini-batching does not reduce the total number of gradient evaluations needed — it just parallelizes them. The real benefit of large batches is hardware utilization: GPUs are more efficient computing 256 gradients simultaneously than one at a time.
+
+Beyond a certain batch size $b^*$ (the "critical batch size"), you get no further convergence benefit and only waste compute. In practice, $b^* \approx 512$–$4096$ for typical language model training. Training with batch size $10^6$ is mostly parallelism engineering, not optimization efficiency.
+
+---
+
+## 4. SGD-A: Iterate Averaging
+
+The oscillation of SGD around $x^*$ under fixed step size is unavoidable — but we can *average out* the noise.
+
+**Polyak-Ruppert averaging**: instead of returning the final iterate $x^K$, return the running average:
+
+$$\bar{x}^K = \frac{1}{K} \sum_{k=0}^{K-1} x^k$$
+
+**Theorem (Averaged SGD):** For $L$-smooth convex $f$ with step sizes $\alpha_k$:
+
+$$\mathbb{E}\left[f(\bar{x}^K)\right] - f^* \leq \frac{R^2 + \sigma^2 \sum_{k=0}^{K-1} \alpha_k^2}{2 \sum_{k=0}^{K-1} \alpha_k}$$
+
+where $R = \|x^0 - x^*\|$.
+
+*Proof sketch.* Expand $\|x^{k+1} - x^*\|^2$ using the SGD update, take expectations, use unbiasedness to handle the gradient term, and use convexity to lower-bound $\mathbb{E}[f(x^k) - f^*]$. Sum from $k=0$ to $K-1$ and telescope. The averaging step then converts the sum of suboptimalities into the suboptimality at the average point. $\square$
+
+**Plugging in $\alpha_k = c/\sqrt{k}$:**
+
+$$\sum_{k=1}^K \alpha_k = c \sum_{k=1}^K \frac{1}{\sqrt{k}} \approx 2c\sqrt{K}, \qquad \sum_{k=1}^K \alpha_k^2 = c^2 \sum_{k=1}^K \frac{1}{k} \approx c^2 \log K$$
+
+So: $\mathbb{E}[f(\bar{x}^K)] - f^* \lesssim \frac{R^2 + c^2\sigma^2 \log K}{2 \cdot 2c\sqrt{K}} = O\!\left(\frac{1}{\sqrt{K}}\right)$
+
+The rate $O(1/\sqrt{K})$ is slower than full GD. But the cost per step is $O(1)$ rather than $O(n)$, so comparing at the same total gradient evaluation budget:
+
+- Full GD after $T$ evaluations: $T/n$ steps → error $O(n/T)$
+- SGD-A after $T$ evaluations: $T$ steps → error $O(1/\sqrt{T})$
+
+For large $n$ and moderate $T$, SGD-A wins. This is the fundamental justification for stochastic optimization in the large-$n$ regime.
+
+**Why does averaging help?** Intuitively: the iterates $x^k$ oscillate around $x^*$, spending roughly equal time on either side. Averaging cancels the oscillation — the mean of the orbit is close to $x^*$ even when individual iterates are far.
+
+Formally: while individual iterates $x^k$ may be far from $x^*$, the convexity of $f$ guarantees $f(\bar{x}^K) \leq \frac{1}{K}\sum_k f(x^k)$, which is the average of function values that are individually close to $f^*$.
+
+---
+
+## 5. The Full Picture
+
+| Method | Rate | Cost/step | Notes |
+|---|---|---|---|
+| GD | $O(1/k)$ | $O(n)$ | $L$-smooth, convex |
+| GD | $(1-1/\kappa)^k$ | $O(n)$ | $L$-smooth, $\mu$-SC |
+| AGD | $O(1/k^2)$ | $O(n)$ | $L$-smooth, convex — optimal |
+| SGD-A | $O(1/\sqrt{k})$ | $O(1)$ | $L$-smooth, convex |
+| SGD | $O(1/k)$ | $O(1)$ | $L$-smooth, $\mu$-SC, decaying $\alpha$ |
+
+The SGD rows are striking: strong convexity, which gave GD a *linear* rate, only gives SGD an $O(1/k)$ rate. The noise floor $\sigma^2$ is the bottleneck, not the function geometry.
+
+This raises a sharp question: **can we have both?** $O(1)$ cost per step like SGD, but linear convergence rate like GD?
+
+The answer is yes — and the algorithm that achieves it is the subject of the next post.
+
+---
+
+*Part of the Mathematics of Data series — mathematical notes on EE-556 at EPFL.*

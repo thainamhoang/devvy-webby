@@ -1,0 +1,183 @@
+---
+title: "Nesterov's Acceleration: How to Beat Gradient Descent"
+date: "2025-03-11"
+series: "Mathematics of Data"
+seriesIndex: 3
+description: "Standard gradient descent is provably suboptimal — there is a gap between what GD achieves and what any first-order method could theoretically achieve. Nesterov's 1983 trick closes that gap entirely, reaching the O(1/k²) lower bound with almost no extra work per iteration."
+tags: ["optimization", "acceleration", "nesterov", "convergence"]
+math: true
+---
+
+Post 2 proved that gradient descent converges at rate $O(1/k)$ for smooth convex functions. A natural question: is this the best any gradient-based algorithm can do?
+
+The answer is no — and the gap is not small. There is a provable lower bound of $\Omega(1/k^2)$ for first-order methods, meaning GD is off by a factor of $k$. Nesterov's Accelerated Gradient Descent (AGD), published in 1983, achieves the $O(1/k^2)$ rate with the same oracle cost per step as GD. This post explains why the gap exists, how AGD closes it, and what the acceleration buys in practice.
+
+---
+
+## 1. The Lower Bound — Why GD Is Not Optimal
+
+Before presenting the algorithm, we need to understand what we are optimizing against.
+
+**Theorem (Nesterov's Lower Bound):** For any first-order method and any $k \leq \frac{d-1}{2}$, there exists an $L$-smooth convex function $f: \mathbb{R}^d \to \mathbb{R}$ such that after $k$ steps starting from $x^0$:
+
+$$f(x^k) - f^* \geq \frac{3L\|x^0 - x^*\|^2}{32(k+1)^2}$$
+
+This is an $\Omega(1/k^2)$ lower bound. GD achieves $O(1/k)$. There is a quadratic gap.
+
+The proof constructs an explicit "hard" function — a tridiagonal quadratic — whose structure means any first-order method must "explore" one new dimension per step, and the global minimum is always in a direction not yet explored. The key insight is:
+
+**GD is memoryless.** At step $k$, GD only uses $\nabla f(x^k)$. It discards all information from steps $0, 1, \ldots, k-1$. A smarter algorithm would accumulate and use that history.
+
+This is the intuition behind acceleration. If you remember where you came from, you can exploit momentum — move not just in the direction the gradient points, but also continue in the direction you were already traveling.
+
+---
+
+## 2. Nesterov's Accelerated Gradient Descent
+
+AGD maintains two sequences: the iterates $x^k$ and a momentum point $y^k$.
+
+$$y^{k+1} = x^k + \frac{k-1}{k+2}(x^k - x^{k-1})$$
+
+$$x^{k+1} = y^{k+1} - \frac{1}{L}\nabla f(y^{k+1})$$
+
+Compared to GD — which just does $x^{k+1} = x^k - \frac{1}{L}\nabla f(x^k)$ — AGD adds one extra step: before taking the gradient, it moves to a *momentum point* $y^{k+1}$ that overshoots the current position in the direction of the previous step.
+
+The momentum coefficient $\frac{k-1}{k+2}$ starts near zero and grows toward 1 as $k \to \infty$. Early in training, the method barely differs from GD. As it progresses and the iterates become more directional, momentum plays an increasingly large role.
+
+**Cost per iteration:** One gradient evaluation $\nabla f(y^{k+1})$ — identical to GD. No extra oracle calls.
+
+**Convergence:**
+
+$$f(x^k) - f^* \leq \frac{2L\|x^0 - x^*\|^2}{(k+1)^2}$$
+
+This matches the lower bound up to a constant factor. AGD is **optimal** among all first-order methods for smooth convex functions.
+
+---
+
+## 3. The Lyapunov Proof
+
+How do we prove the $O(1/k^2)$ rate? The standard approach uses a **Lyapunov function** — an "energy" quantity that is non-increasing along the algorithm's trajectory and whose initial value controls the final error.
+
+Define the energy function:
+
+$$E^k = (k+1)^2(f(x^k) - f^*) + 2L\|z^k - x^*\|^2$$
+
+where $z^k$ is an auxiliary sequence defined by $z^{k+1} = z^k - \frac{k+1}{2L}\nabla f(y^{k+1})$.
+
+**Claim:** $E^{k+1} \leq E^k$ for all $k \geq 0$.
+
+*Proof sketch.* We need to show:
+
+$$(k+2)^2(f(x^{k+1}) - f^*) + 2L\|z^{k+1} - x^*\|^2 \leq (k+1)^2(f(x^k) - f^*) + 2L\|z^k - x^*\|^2$$
+
+**Term 1: Bound $f(x^{k+1})$.** By the descent lemma applied at $y^{k+1}$:
+
+$$f(x^{k+1}) \leq f(y^{k+1}) - \frac{1}{2L}\|\nabla f(y^{k+1})\|^2$$
+
+**Term 2: Expand $\|z^{k+1} - x^*\|^2$.** By the update rule for $z^k$:
+
+$$\|z^{k+1} - x^*\|^2 = \|z^k - x^*\|^2 - \frac{k+1}{L}\nabla f(y^{k+1})^T(z^k - x^*) + \frac{(k+1)^2}{4L^2}\|\nabla f(y^{k+1})\|^2$$
+
+**Term 3: Use convexity.** From the first-order convexity condition:
+
+$$f^* \geq f(y^{k+1}) + \nabla f(y^{k+1})^T(x^* - y^{k+1})$$
+
+Rearranging: $f(y^{k+1}) - f^* \leq \nabla f(y^{k+1})^T(y^{k+1} - x^*)$.
+
+Combining these three steps with the specific choice of momentum coefficient $\frac{k-1}{k+2}$ (which ensures $y^{k+1}$ lies on the right convex combination of $x^k$ and $z^k$) and carefully tracking the algebra, one shows that all cross-terms cancel and $E^{k+1} \leq E^k$. $\square$
+
+Once we have $E^k \leq E^0$ for all $k$, the bound follows immediately:
+
+$$(k+1)^2(f(x^k) - f^*) \leq E^k \leq E^0 = f(x^0) - f^* + 2L\|x^0 - x^*\|^2 \leq 2L\|x^0 - x^*\|^2 + (f(x^0)-f^*)$$
+
+Dividing: $f(x^k) - f^* \leq \frac{2L\|x^0 - x^*\|^2 + (f(x^0)-f^*)}{(k+1)^2} = O(1/k^2)$.
+
+**Why does this work?** The Lyapunov function $E^k$ is not the function value — it mixes the function value with a distance term involving $z^k$. This coupling is what makes the proof go through. The proof technique of finding a Lyapunov function and showing it decreases is general: it appears in control theory, dynamical systems, and throughout optimization analysis. When you see a convergence proof, look for the Lyapunov function — it is the heart of the argument.
+
+---
+
+## 4. Non-Monotonicity: The Necessary Cost of Speed
+
+There is a feature of AGD that surprises people seeing it for the first time: **it is not a descent method**. The function value $f(x^k)$ can increase between consecutive steps.
+
+Consider $f(x) = x^2$ starting from $x^0 = 1$. GD with $\alpha = 1/L$ marches steadily downhill:
+
+```
+GD:   f(x⁰) = 1.000 → f(x¹) = 0.250 → f(x²) = 0.063 → f(x³) = 0.016 ...
+AGD:  f(x⁰) = 1.000 → f(x¹) = 0.250 → f(x²) = 0.028 → f(x³) = 0.031 → f(x⁴) = 0.004 ...
+```
+
+At step 3, AGD's value *increases* from 0.028 to 0.031 before dropping sharply to 0.004. GD's value at step 4 would still be 0.004 — but AGD arrived there a step earlier overall, and the gap widens with more steps.
+
+The overshoot is not a bug. When AGD takes the momentum step $y^{k+1} = x^k + \frac{k-1}{k+2}(x^k - x^{k-1})$, it moves past the gradient-step point. This can temporarily increase $f$, but the momentum is aimed at a region of lower $f$ further ahead. The global trajectory is more efficient precisely because it is willing to go uphill locally.
+
+This non-monotonicity has a practical consequence: **you cannot use $f(x^k) > f(x^{k-1})$ as an early-stopping criterion with AGD**. A common error in implementations is to detect an increase in loss and reset or reduce the step — this breaks the acceleration and reverts to $O(1/k)$ convergence.
+
+---
+
+## 5. Strong Convexity: Where $\sqrt{\kappa}$ Beats $\kappa$
+
+For $\mu$-strongly convex functions, AGD has a modified form that achieves a linear rate — but with a dramatically better contraction factor than GD.
+
+| Method | Rate (strongly convex) | Steps to $\epsilon$-accuracy |
+|---|---|---|
+| GD | $\left(1 - \dfrac{1}{\kappa}\right)^k$ | $O(\kappa \log 1/\epsilon)$ |
+| AGD | $\left(1 - \dfrac{1}{\sqrt{\kappa}}\right)^k$ | $O(\sqrt{\kappa} \log 1/\epsilon)$ |
+
+The improvement from $\kappa$ to $\sqrt{\kappa}$ in the iteration count is the headline result.
+
+For ill-conditioned problems, this is transformative. Take $\kappa = 10^6$ — not extreme for a large-scale ML problem with poor data conditioning. Steps needed to reach $10^{-6}$ relative accuracy:
+
+$$\text{GD: } 10^6 \times 14 = 14{,}000{,}000 \text{ steps}$$
+
+$$\text{AGD: } 10^3 \times 14 = 14{,}000 \text{ steps}$$
+
+A factor of 1000. With identical cost per step. This is why acceleration matters for large-scale optimization.
+
+The accelerated update for strongly convex $f$ uses a fixed momentum coefficient $\frac{\sqrt{\kappa}-1}{\sqrt{\kappa}+1}$ instead of the increasing schedule $\frac{k-1}{k+2}$:
+
+$$y^{k+1} = x^k + \frac{\sqrt{\kappa}-1}{\sqrt{\kappa}+1}(x^k - x^{k-1})$$
+
+$$x^{k+1} = y^{k+1} - \frac{1}{L}\nabla f(y^{k+1})$$
+
+---
+
+## 6. Beyond First-Order: Newton's Method and Why It Doesn't Scale
+
+AGD is optimal among first-order methods — but what if we allowed second-order oracle queries, i.e., access to the Hessian $\nabla^2 f(x)$?
+
+**Newton's method** uses the Hessian to form a local quadratic model and jumps directly to its minimum:
+
+$$x^{k+1} = x^k - [\nabla^2 f(x^k)]^{-1} \nabla f(x^k)$$
+
+The convergence is **quadratic** near the minimum:
+
+$$\|x^{k+1} - x^*\| \leq C \|x^k - x^*\|^2$$
+
+If you start within distance $r$ of $x^*$, after $k$ steps you are within distance $C^{2^k - 1} r^{2^k}$. The number of correct decimal places *doubles* at each step. After 10 steps near the minimum, you have $2^{10} = 1024$ decimal places of accuracy.
+
+The cost: forming and inverting the $p \times p$ Hessian requires $O(p^2)$ memory and $O(p^3)$ computation per step. For a neural network with $p = 10^8$ parameters, this is $10^{24}$ flops per step. Completely infeasible.
+
+**L-BFGS (Limited-memory BFGS)** approximates $[\nabla^2 f]^{-1}$ using the last $m$ gradient differences (typically $m = 10$–$20$). This gives superlinear convergence in practice with $O(mp)$ cost per step. It is the standard second-order method for non-neural-network ML (SVMs, logistic regression, etc.) and works extremely well when $p$ is in the thousands to low millions.
+
+For neural networks, the story is different — and we will return to it when we discuss adaptive methods like Adam, which can be understood as cheap diagonal approximations to the inverse Hessian.
+
+---
+
+## Looking Forward
+
+The convergence hierarchy so far:
+
+| Method | Assumption | Rate |
+|---|---|---|
+| GD | $L$-smooth, convex | $O(1/k)$ |
+| AGD | $L$-smooth, convex | $O(1/k^2)$ — **optimal** |
+| GD | $L$-smooth, $\mu$-SC | $O((1-1/\kappa)^k)$ |
+| AGD | $L$-smooth, $\mu$-SC | $O((1-1/\sqrt{\kappa})^k)$ — **optimal** |
+| Newton | $L$-smooth (local) | Quadratic — but $O(p^3)$/step |
+
+The next post confronts a different problem entirely: what happens when the dataset is too large to compute $\nabla f$ at all? When $f(x) = \frac{1}{n}\sum_{i=1}^n f_i(x)$ and $n = 10^9$, even a single gradient evaluation is prohibitive. The answer is Stochastic Gradient Descent — and the price of cheapening each step is a fundamental, unavoidable variance that forces the convergence rate back down to $O(1/k)$.
+
+---
+
+*Part of the Mathematics of Data series — mathematical notes on EE-556 at EPFL.*

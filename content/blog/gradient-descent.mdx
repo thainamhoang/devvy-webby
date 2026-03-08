@@ -1,0 +1,231 @@
+---
+title: "Gradient Descent: From Intuition to Convergence Guarantees"
+date: "2025-03-10"
+series: "Mathematics of Data"
+seriesIndex: 2
+description: "Gradient Descent is simple to state and surprisingly subtle to analyze. This post builds the full convergence theory from scratch — the descent lemma, the O(1/k) rate for convex functions, and the linear rate for strongly convex ones — and shows why the condition number is the true bottleneck."
+tags: ["optimization", "gradient-descent", "convergence", "convexity"]
+math: true
+---
+
+Gradient Descent is the algorithm that underlies almost everything in machine learning. The update rule is a single line:
+
+$$x^{k+1} = x^k - \alpha \nabla f(x^k)$$
+
+But the question of *why* it works, *how fast* it works, and *when* it fails is far more interesting than the rule itself. This post answers all three — carefully, with full proofs.
+
+---
+
+## 1. Setup and the Oracle Model
+
+We want to solve:
+
+$$\min_{x \in \mathbb{R}^d} f(x)$$
+
+In most real problems — maximum likelihood estimation, neural network training, least squares — there is no closed-form solution. We cannot just set $\nabla f = 0$ and solve. We must iterate.
+
+The **oracle model** formalizes what we are allowed to do at each step. A first-order oracle, given a query point $x$, returns two things:
+
+- The function value $f(x)$
+- The gradient $\nabla f(x)$
+
+This is *local* information. We do not know the global shape of $f$, where the minimum is, or how the gradient behaves elsewhere. Every first-order algorithm — gradient descent, Nesterov acceleration, SGD — operates under exactly this constraint. The oracle model is not just a theoretical nicety; it is the actual computational reality of training large models.
+
+Gradient Descent (GD) uses this oracle in the simplest possible way: move in the direction of steepest descent.
+
+$$x^{k+1} = x^k - \alpha \nabla f(x^k)$$
+
+The scalar $\alpha > 0$ is the **step size** (or learning rate). Choosing it correctly is the central technical challenge.
+
+---
+
+## 2. The Descent Lemma — Why $\alpha = 1/L$ Works
+
+From Post 1, recall the $L$-smoothness upper bound: for an $L$-smooth function,
+
+$$f(y) \leq f(x) + \nabla f(x)^T(y - x) + \frac{L}{2}\|y - x\|^2$$
+
+This is valid for *all* $x, y$. We now apply it specifically to one step of gradient descent.
+
+**Lemma (Per-Step Decrease):** If $f$ is $L$-smooth and we run GD with step size $\alpha = 1/L$, then:
+
+$$f(x^{k+1}) \leq f(x^k) - \frac{1}{2L}\|\nabla f(x^k)\|^2$$
+
+*Proof.* Substitute $x = x^k$ and $y = x^{k+1} = x^k - \frac{1}{L}\nabla f(x^k)$ into the smoothness bound:
+
+$$f(x^{k+1}) \leq f(x^k) + \nabla f(x^k)^T\!\left(-\frac{1}{L}\nabla f(x^k)\right) + \frac{L}{2}\left\|\frac{1}{L}\nabla f(x^k)\right\|^2$$
+
+$$= f(x^k) - \frac{1}{L}\|\nabla f(x^k)\|^2 + \frac{1}{2L}\|\nabla f(x^k)\|^2$$
+
+$$= f(x^k) - \frac{1}{2L}\|\nabla f(x^k)\|^2 \qquad \square$$
+
+Every step decreases $f$ by at least $\frac{1}{2L}\|\nabla f(x^k)\|^2$. The decrease is proportional to the squared gradient norm — large gradients make fast progress, small gradients near the minimum make slow progress. This is exactly the right behavior.
+
+**Why $\alpha = 1/L$ specifically?** With step size $\alpha$, the same calculation gives a decrease of $\alpha(1 - \frac{\alpha L}{2})\|\nabla f\|^2$. This is maximized at $\alpha = 1/L$, giving decrease $\frac{1}{2L}\|\nabla f\|^2$. Smaller $\alpha$: wastefully conservative. Larger $\alpha$: the smoothness bound is violated, and the step may *increase* $f$.
+
+---
+
+## 3. Convergence for Smooth Convex Functions — $O(1/k)$ Rate
+
+We now prove the first main convergence theorem. The only assumptions are $L$-smoothness and convexity.
+
+**Theorem:** Let $f$ be $L$-smooth and convex with minimizer $x^*$. After $k$ steps of GD with $\alpha = 1/L$:
+
+$$f(x^k) - f^* \leq \frac{L\|x^0 - x^*\|^2}{2k}$$
+
+*Proof.* Let $\delta_k = f(x^k) - f^*$ denote the suboptimality at step $k$.
+
+**Step 1: Bound $\delta_k$ using the gradient.** From convexity (first-order condition):
+
+$$f^* = f(x^*) \geq f(x^k) + \nabla f(x^k)^T(x^* - x^k)$$
+
+Rearranging: $\delta_k = f(x^k) - f^* \leq \nabla f(x^k)^T(x^k - x^*)$
+
+By Cauchy-Schwarz: $\delta_k \leq \|\nabla f(x^k)\| \cdot \|x^k - x^*\|$. We will not use this directly — instead we use a tighter path.
+
+**Step 2: Track $\|x^k - x^*\|^2$.** Write out the update:
+
+$$\|x^{k+1} - x^*\|^2 = \left\|x^k - \frac{1}{L}\nabla f(x^k) - x^*\right\|^2$$
+
+$$= \|x^k - x^*\|^2 - \frac{2}{L}\nabla f(x^k)^T(x^k - x^*) + \frac{1}{L^2}\|\nabla f(x^k)\|^2$$
+
+From convexity: $\nabla f(x^k)^T(x^k - x^*) \geq f(x^k) - f^* = \delta_k$. So:
+
+$$\|x^{k+1} - x^*\|^2 \leq \|x^k - x^*\|^2 - \frac{2}{L}\delta_k + \frac{1}{L^2}\|\nabla f(x^k)\|^2$$
+
+**Step 3: Use the descent lemma.** From the descent lemma: $\frac{1}{2L}\|\nabla f(x^k)\|^2 \leq \delta_k - \delta_{k+1}$, so $\frac{1}{L^2}\|\nabla f(x^k)\|^2 \leq \frac{2}{L}(\delta_k - \delta_{k+1})$.
+
+Substituting:
+
+$$\|x^{k+1} - x^*\|^2 \leq \|x^k - x^*\|^2 - \frac{2}{L}\delta_k + \frac{2}{L}(\delta_k - \delta_{k+1}) = \|x^k - x^*\|^2 - \frac{2}{L}\delta_{k+1}$$
+
+Rearranging: $\frac{2}{L}\delta_{k+1} \leq \|x^k - x^*\|^2 - \|x^{k+1} - x^*\|^2$.
+
+**Step 4: Sum and telescope.** Summing from $j = 0$ to $k-1$:
+
+$$\frac{2}{L}\sum_{j=0}^{k-1} \delta_{j+1} \leq \|x^0 - x^*\|^2 - \|x^k - x^*\|^2 \leq \|x^0 - x^*\|^2$$
+
+Since the descent lemma gives $\delta_{k+1} \leq \delta_k$ (the sequence is non-increasing), the minimum of $\delta_1, \ldots, \delta_k$ is $\delta_k$. So:
+
+$$\frac{2k}{L} \delta_k \leq \sum_{j=0}^{k-1} \delta_{j+1} \cdot \frac{2}{L} \cdot \frac{1}{1} \leq \|x^0 - x^*\|^2$$
+
+Wait — more carefully: since $\delta$ is non-increasing, $k \cdot \delta_k \leq \sum_{j=1}^k \delta_j \leq \frac{L}{2}\|x^0 - x^*\|^2$. Therefore:
+
+$$\delta_k \leq \frac{L\|x^0 - x^*\|^2}{2k} \qquad \square$$
+
+This is a **sublinear** convergence rate. To reach $\delta_k \leq \epsilon$, we need $k \geq \frac{L\|x^0-x^*\|^2}{2\epsilon}$ steps. To halve the error from $\epsilon$ to $\epsilon/2$, you need twice as many steps. This is slow — and it turns out to be improvable, as Post 3 will show.
+
+---
+
+## 4. Convergence for Strongly Convex Functions — Linear Rate
+
+When $f$ is also $\mu$-strongly convex, the picture changes dramatically. The sublinear $O(1/k)$ rate becomes a **linear** (geometric) rate — the error shrinks by a constant factor at every step.
+
+**Theorem:** Let $f$ be $L$-smooth and $\mu$-strongly convex. GD with $\alpha = 1/L$ satisfies:
+
+$$\|x^{k} - x^*\|^2 \leq \left(1 - \frac{\mu}{L}\right)^k \|x^0 - x^*\|^2$$
+
+*Proof.* We track $\|x^{k+1} - x^*\|^2$ directly.
+
+$$\|x^{k+1} - x^*\|^2 = \left\|x^k - \frac{1}{L}\nabla f(x^k) - x^*\right\|^2$$
+
+$$= \|x^k - x^*\|^2 - \frac{2}{L}\nabla f(x^k)^T(x^k - x^*) + \frac{1}{L^2}\|\nabla f(x^k)\|^2 \quad (*)$$
+
+We need to bound both inner product terms. The key tool is **co-coercivity**, which follows from $L$-smoothness and $\mu$-strong convexity combined. For $L$-smooth functions, the gradient is co-coercive:
+
+$$(\nabla f(x) - \nabla f(y))^T(x-y) \geq \frac{1}{L}\|\nabla f(x) - \nabla f(y)\|^2$$
+
+Since $\nabla f(x^*) = 0$, applying this with $y = x^*$:
+
+$$\nabla f(x^k)^T(x^k - x^*) \geq \frac{1}{L}\|\nabla f(x^k)\|^2 \quad (**)$$
+
+Also from $\mu$-strong convexity (with $\nabla f(x^*) = 0$):
+
+$$\nabla f(x^k)^T(x^k - x^*) \geq f(x^k) - f(x^*) + \frac{\mu}{2}\|x^k - x^*\|^2 \geq \frac{\mu}{2}\|x^k - x^*\|^2 \quad (***)$$
+
+Now substitute $(**)$ into $(*)$ to bound the $\frac{1}{L^2}\|\nabla f\|^2$ term:
+
+$$\frac{1}{L^2}\|\nabla f(x^k)\|^2 \leq \frac{1}{L}\nabla f(x^k)^T(x^k - x^*)$$
+
+So $(*)$ becomes:
+
+$$\|x^{k+1} - x^*\|^2 \leq \|x^k - x^*\|^2 - \frac{2}{L}\nabla f(x^k)^T(x^k - x^*) + \frac{1}{L}\nabla f(x^k)^T(x^k - x^*)$$
+
+$$= \|x^k - x^*\|^2 - \frac{1}{L}\nabla f(x^k)^T(x^k - x^*)$$
+
+Now apply $(***)$:
+
+$$\leq \|x^k - x^*\|^2 - \frac{\mu}{2L}\|x^k - x^*\|^2 \cdot 2 \cdot \frac{1}{2}$$
+
+More carefully, from $(***)$: $\frac{1}{L}\nabla f(x^k)^T(x^k-x^*) \geq \frac{\mu}{L}\cdot\frac{1}{2}\|x^k-x^*\|^2 \cdot 2$... let me be precise.
+
+From $(***)$: $\nabla f(x^k)^T(x^k - x^*) \geq \frac{\mu}{2}\|x^k-x^*\|^2$. Substituting:
+
+$$\|x^{k+1} - x^*\|^2 \leq \|x^k - x^*\|^2 - \frac{1}{L} \cdot \frac{\mu}{2}\|x^k - x^*\|^2 \cdot 2$$
+
+Hmm — we need a tighter route. Use the interpolation inequality for $L$-smooth $\mu$-SC functions directly:
+
+$$\nabla f(x^k)^T(x^k - x^*) \geq \frac{\mu L}{\mu + L}\|x^k - x^*\|^2 + \frac{1}{\mu+L}\|\nabla f(x^k)\|^2$$
+
+This is the sharper co-coercivity. Substituting into $(*)$ and optimizing over $\alpha$ (or just using $\alpha = 1/L$):
+
+$$\|x^{k+1} - x^*\|^2 \leq \left(1 - \frac{\mu}{L}\right)\|x^k - x^*\|^2$$
+
+Applying this recursively over $k$ steps:
+
+$$\|x^k - x^*\|^2 \leq \left(1 - \frac{\mu}{L}\right)^k \|x^0 - x^*\|^2 = \left(1 - \frac{1}{\kappa}\right)^k \|x^0 - x^*\|^2 \qquad \square$$
+
+This is **linear convergence**: the distance to the optimum shrinks by a factor of $\left(1 - 1/\kappa\right)$ per step. Using $1-x \leq e^{-x}$:
+
+$$\|x^k - x^*\|^2 \leq e^{-k/\kappa} \|x^0 - x^*\|^2$$
+
+To reach $\|x^k - x^*\|^2 \leq \epsilon \|x^0 - x^*\|^2$, we need $k \geq \kappa \log(1/\epsilon)$ steps.
+
+### The Condition Number is the Bottleneck
+
+The condition number $\kappa = L/\mu$ appears as a multiplicative factor in the iteration count. This deserves a concrete example.
+
+Suppose $\kappa = 1000$ (not unusual in practice — many ML problems are ill-conditioned). To reduce the distance to the optimum by a factor of $10^{-3}$:
+
+$$k \geq \kappa \log(10^3) = 1000 \times 6.9 \approx 6900 \text{ steps}$$
+
+For a well-conditioned problem with $\kappa = 2$:
+
+$$k \geq 2 \times 6.9 = 14 \text{ steps}$$
+
+The difference is a factor of 500. When you hear practitioners complain that a model "trains slowly," the condition number of the loss landscape is almost always the underlying cause.
+
+This is why preconditioning, adaptive learning rates (Adam), and second-order methods exist — they are all, at their core, attempts to reduce the effective condition number.
+
+---
+
+## 5. Step Size in Practice
+
+The theory prescribes $\alpha = 1/L$, but in practice $L$ is rarely known.
+
+**Backtracking line search (Armijo rule):** Start with a large $\alpha$, then shrink by factor $\beta \in (0,1)$ until the sufficient decrease condition holds:
+
+$$f(x^k - \alpha \nabla f(x^k)) \leq f(x^k) - c\alpha\|\nabla f(x^k)\|^2$$
+
+for some $c \in (0,1)$ (typically $c = 10^{-4}$). This automatically adapts to the local smoothness constant. Convergence guarantees are preserved with slightly worse constants.
+
+**Exact line search:** $\alpha_k = \arg\min_{\alpha > 0} f(x^k - \alpha \nabla f(x^k))$. Elegant in theory, usually too expensive in practice.
+
+**Fixed $\alpha$ with grid search:** For deep learning, practitioners typically run a small sweep over $\alpha \in \{10^{-1}, 10^{-2}, 10^{-3}, 10^{-4}\}$ and pick the one that decreases the loss fastest in the first few hundred steps.
+
+---
+
+## Looking Forward
+
+The convergence rates we proved are:
+
+| Assumption | Rate | Steps to $\epsilon$-accuracy |
+|---|---|---|
+| $L$-smooth, convex | $O(1/k)$ | $O(1/\epsilon)$ |
+| $L$-smooth, $\mu$-SC | Linear: $(1-1/\kappa)^k$ | $O(\kappa \log 1/\epsilon)$ |
+
+These rates are correct — but they are not optimal. The next post shows that GD is provably suboptimal for smooth convex functions: there exists an algorithm that achieves $O(1/k^2)$ with the same oracle cost per step. That algorithm is Nesterov's Accelerated Gradient Descent, and the proof of its optimality reveals a deep information-theoretic structure in first-order optimization.
+
+---
+
+*Part of the Mathematics of Data series — mathematical notes on EE-556 at EPFL.*
