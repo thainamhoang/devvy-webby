@@ -1,0 +1,213 @@
+---
+title: "Non-Smooth Optimization: Proximal Operators and FISTA"
+date: "2025-03-14"
+series: "Mathematics of Data"
+seriesIndex: 6
+description: "The best statistical models — Lasso, group sparsity, total variation — have non-differentiable objectives. Proximal operators are the right generalization of gradient steps for this world, and FISTA recovers the optimal O(1/k²) rate even without smoothness."
+tags: ["optimization", "proximal", "fista", "lasso", "non-smooth"]
+math: true
+---
+
+Every algorithm we have seen so far assumes $f$ is differentiable. In Post 1, we saw that the $\ell_1$ norm's pointy geometry is precisely what induces sparsity in solutions. But that pointy geometry comes with a price: $\|x\|_1$ is not differentiable at any point where some $x_i = 0$, which is exactly the region of interest.
+
+The Lasso objective is $F(x) = \frac{1}{2}\|Ax - b\|^2 + \lambda\|x\|_1$. The squared loss is smooth. The regularizer is not. We cannot simply compute $\nabla F$ and run gradient descent.
+
+This post develops the right framework for this structure: the **proximal operator**, which handles the non-smooth part exactly, and **FISTA**, which recovers the optimal $O(1/k^2)$ convergence rate.
+
+---
+
+## 1. The Composite Problem
+
+The problems we care about have the form:
+
+$$\min_{x \in \mathbb{R}^d} F(x) = f(x) + g(x)$$
+
+where:
+- $f$ is **smooth**: differentiable, $L$-smooth, and convex
+- $g$ is **convex but non-smooth**: known closed form, but not differentiable everywhere
+
+The canonical example: $f(x) = \frac{1}{2}\|Ax-b\|^2$ and $g(x) = \lambda\|x\|_1$.
+
+The naive approach is subgradient descent on $F$ directly. But this discards the structure entirely — it treats $F$ as a single black-box non-smooth function and pays the $O(1/\sqrt{k})$ rate that comes with non-smoothness (we will derive this lower bound in Post 8).
+
+We can do much better by exploiting the split: $f$ is smooth so we can take gradient steps on it; $g$ has known structure so we can handle it exactly. The algorithm that does this is built around the proximal operator.
+
+---
+
+## 2. The Proximal Operator
+
+**Definition.** For a convex function $g$ and step size $\alpha > 0$, the proximal operator is:
+
+$$\operatorname{prox}_{\alpha g}(x) = \arg\min_{u \in \mathbb{R}^d} \left\{ g(u) + \frac{1}{2\alpha}\|u - x\|^2 \right\}$$
+
+The minimization always has a unique solution (strongly convex in $u$), so $\operatorname{prox}_{\alpha g}$ is well-defined everywhere.
+
+**Interpretation.** $\operatorname{prox}_{\alpha g}(x)$ finds the point $u$ that minimizes $g$ while not straying too far from $x$. The parameter $\alpha$ controls the trade-off: large $\alpha$ weights $g$ minimization, small $\alpha$ stays close to $x$. It is a *soft projection* — not projecting onto the minimum of $g$, but compromising between minimizing $g$ and staying near the current point.
+
+### Soft Thresholding: The Proximal Operator of $\ell_1$
+
+Let $g(x) = \lambda\|x\|_1$. The proximal operator decouples across coordinates, so we solve the scalar problem for each $i$:
+
+$$[\operatorname{prox}_{\alpha g}(x)]_i = \arg\min_{u \in \mathbb{R}} \left\{ \lambda|u| + \frac{1}{2\alpha}(u - x_i)^2 \right\}$$
+
+Call this $h(u) = \lambda|u| + \frac{1}{2\alpha}(u - x_i)^2$. We find the minimizer by cases.
+
+**Case 1: $u > 0$.** Then $h(u) = \lambda u + \frac{1}{2\alpha}(u-x_i)^2$, which is smooth. Setting $h'(u) = 0$:
+
+$$\lambda + \frac{u - x_i}{\alpha} = 0 \implies u = x_i - \alpha\lambda$$
+
+This is valid (gives $u > 0$) iff $x_i > \alpha\lambda$.
+
+**Case 2: $u < 0$.** Then $h(u) = -\lambda u + \frac{1}{2\alpha}(u-x_i)^2$, setting $h'(u) = 0$:
+
+$$-\lambda + \frac{u - x_i}{\alpha} = 0 \implies u = x_i + \alpha\lambda$$
+
+Valid (gives $u < 0$) iff $x_i < -\alpha\lambda$.
+
+**Case 3: $u = 0$.** The subdifferential condition $0 \in \partial h(0)$ gives:
+
+$$0 \in \alpha\lambda[-1,1] + (0 - x_i) \implies x_i \in [-\alpha\lambda, \alpha\lambda]$$
+
+Combining all three cases:
+
+$$[\operatorname{prox}_{\alpha g}(x)]_i = \mathcal{S}_{\alpha\lambda}(x_i) := \operatorname{sign}(x_i)\max(|x_i| - \alpha\lambda,\ 0)$$
+
+This is the **soft-thresholding operator** $\mathcal{S}_{\alpha\lambda}$. Its behavior:
+- If $|x_i| > \alpha\lambda$: shrink toward zero by $\alpha\lambda$ (keep the sign, reduce the magnitude)
+- If $|x_i| \leq \alpha\lambda$: set to exactly zero
+
+This is the sparsity mechanism of Lasso made explicit. The connection to Post 1's geometry: the $\ell_1$ ball has corners on the coordinate axes, and soft-thresholding is precisely the algebraic operation that pushes solutions onto those corners. Components too small to "survive" the threshold are zeroed out; components large enough survive but shrunk.
+
+### Other Proximal Operators
+
+| $g(x)$ | $\operatorname{prox}_{\alpha g}(x)$ | Notes |
+|---|---|---|
+| $\lambda\|x\|_1$ | $\mathcal{S}_{\alpha\lambda}(x)$ — soft thresholding | Component-wise |
+| $\delta_C(x)$ (indicator of convex $C$) | $\Pi_C(x)$ — projection onto $C$ | Prox = projection |
+| $\lambda\|x\|_2$ | $\max(1 - \frac{\alpha\lambda}{\|x\|},0) \cdot x$ | Soft shrinkage toward 0 |
+| $\lambda\|X\|_*$ (nuclear norm) | Singular value soft-thresholding | $U\mathcal{S}_{\alpha\lambda}(\Sigma)V^T$ |
+| $\frac{\lambda}{2}\|x\|^2$ | $\frac{x}{1+\alpha\lambda}$ | Scaling |
+
+The indicator function case reveals that projection is a special case of the proximal operator — projected gradient descent is ISTA with $g = \delta_C$.
+
+---
+
+## 3. ISTA — The Proximal Gradient Algorithm
+
+With the proximal operator in hand, the **Iterative Shrinkage-Thresholding Algorithm (ISTA)** is immediate:
+
+$$x^{k+1} = \operatorname{prox}_{\alpha g}\!\left(x^k - \alpha \nabla f(x^k)\right)$$
+
+The interpretation is clean: take a gradient step on the smooth part $f$, then apply the proximal operator for the non-smooth part $g$. Each half of the problem is handled by the right tool.
+
+### Proximal Descent Lemma
+
+**Lemma.** For $L$-smooth $f$ and any convex $g$, ISTA with $\alpha = 1/L$ satisfies:
+
+$$F(x^{k+1}) \leq F(x^k) - \frac{1}{2L}\|x^{k+1} - x^k\|^2 \cdot L^2 / L$$
+
+More precisely, substituting $y = x^{k+1}$ and $x = x^k - \alpha\nabla f(x^k)$ (the gradient step point):
+
+$$F(x^{k+1}) \leq f(x^k) + \nabla f(x^k)^T(x^{k+1}-x^k) + \frac{L}{2}\|x^{k+1}-x^k\|^2 + g(x^{k+1})$$
+
+This is the $L$-smoothness bound on $f$ plus $g(x^{k+1})$. Using the optimality condition for the proximal step — that $x^{k+1}$ minimizes $g(u) + \frac{1}{2\alpha}\|u - (x^k - \alpha\nabla f(x^k))\|^2$ — one shows:
+
+$$F(x^{k+1}) \leq F(x^k) - \frac{1}{2L}\|\nabla_L F(x^k)\|^2$$
+
+where $\nabla_L F(x^k) = L(x^k - x^{k+1})$ is the **proximal gradient** — the composite analogue of $\nabla F$.
+
+### Convergence: $O(1/k)$
+
+**Theorem.** ISTA with $\alpha = 1/L$ on $L$-smooth $f$ and convex $g$ gives:
+
+$$F(x^k) - F^* \leq \frac{L\|x^0 - x^*\|^2}{2k}$$
+
+The proof mirrors the smooth GD proof from Post 2 exactly, replacing $\nabla f$ with the proximal gradient $\nabla_L F$. The non-smoothness of $g$ does not affect the rate because we never take a subgradient of $g$ — we apply its proximal operator exactly.
+
+This is the power of exploiting composite structure: we get the same $O(1/k)$ rate as smooth GD, despite $g$ being non-smooth.
+
+---
+
+## 4. FISTA — Nesterov Acceleration for Composite Problems
+
+Nesterov's momentum trick from Post 3 applies directly to ISTA. The result is **FISTA (Fast ISTA)**:
+
+Initialize $x^0 = y^1$, $t_1 = 1$. For $k = 1, 2, \ldots$:
+
+$$x^k = \operatorname{prox}_{\alpha g}\!\left(y^k - \alpha \nabla f(y^k)\right)$$
+
+$$t_{k+1} = \frac{1 + \sqrt{1 + 4t_k^2}}{2}$$
+
+$$y^{k+1} = x^k + \frac{t_k - 1}{t_{k+1}}(x^k - x^{k-1})$$
+
+The only change from ISTA: the gradient step is taken at the momentum point $y^k$ rather than $x^k$, and $y^{k+1}$ is an extrapolation of $x^k$ beyond the previous iterate.
+
+The momentum coefficient $\frac{t_k-1}{t_{k+1}}$ follows the specific schedule dictated by the sequence $t_k$. For large $k$, $t_k \approx k/2$, so the coefficient approaches $\frac{k/2 - 1}{(k+1)/2} \to 1$. The algorithm becomes increasingly aggressive about extrapolating as it progresses — the same behavior as AGD.
+
+### The $t_k$ Sequence
+
+The recurrence $t_{k+1} = \frac{1+\sqrt{1+4t_k^2}}{2}$ with $t_1=1$ gives:
+
+$$t_1 = 1, \quad t_2 = \frac{1+\sqrt{5}}{2} \approx 1.618, \quad t_3 \approx 2.058, \quad t_k \approx \frac{k+1}{2}$$
+
+The choice of this specific sequence is not arbitrary. The convergence proof requires $t_{k+1}^2 - t_{k+1} \leq t_k^2$, which the recurrence satisfies by construction. This algebraic condition is what makes the Lyapunov argument go through.
+
+### Convergence: $O(1/k^2)$
+
+**Theorem (Beck & Teboulle 2009).** FISTA with $\alpha = 1/L$ satisfies:
+
+$$F(x^k) - F^* \leq \frac{2L\|x^0 - x^*\|^2}{(k+1)^2}$$
+
+This matches the Nesterov lower bound — FISTA is **optimal** for composite minimization. The proof uses the same Lyapunov energy function as AGD:
+
+$$E^k = t_k^2(F(x^k) - F^*) + \frac{L}{2}\|v^k - x^*\|^2$$
+
+where $v^k = x^{k-1} + \frac{1}{t_{k-1}}(x^k - x^{k-1})$ is an auxiliary sequence. One shows $E^{k+1} \leq E^k$ using the proximal descent lemma and the $t_k$ recurrence, then divides by $t_k^2 \approx k^2/4$.
+
+The rate hierarchy for composite problems now mirrors smooth optimization exactly:
+
+| Algorithm | Rate | Optimal? |
+|---|---|---|
+| Subgradient descent | $O(1/\sqrt{k})$ | Yes (for non-smooth) |
+| ISTA | $O(1/k)$ | No |
+| FISTA | $O(1/k^2)$ | Yes (for composite) |
+
+ISTA and FISTA both handle the non-smooth $g$ exactly via the proximal step. The gap between them is purely the presence or absence of momentum — the same gap as between GD and AGD in the smooth setting.
+
+---
+
+## 5. When is the Proximal Operator Tractable?
+
+The proximal framework is useful only when $\operatorname{prox}_{\alpha g}$ can be computed efficiently. Fortunately, the common regularizers in machine learning all admit closed-form proximal operators.
+
+**Group sparsity** $g(x) = \lambda \sum_j \|x_{G_j}\|_2$ (where $G_j$ partition the coordinates into groups):
+
+$$[\operatorname{prox}_{\alpha g}(x)]_{G_j} = \left(1 - \frac{\alpha\lambda}{\|x_{G_j}\|_2}\right)_+ x_{G_j}$$
+
+This is block soft-thresholding: entire groups are zeroed out when $\|x_{G_j}\|_2 \leq \alpha\lambda$.
+
+**Nuclear norm** $g(X) = \lambda\|X\|_*$. Compute the SVD $X = U\Sigma V^T$, soft-threshold the singular values, reassemble:
+
+$$\operatorname{prox}_{\alpha g}(X) = U \mathcal{S}_{\alpha\lambda}(\Sigma) V^T$$
+
+**Simplex projection** $g = \delta_{\Delta_d}$ where $\Delta_d = \{x \geq 0 : \sum_i x_i = 1\}$: solvable in $O(d \log d)$ by sorting.
+
+**Moreau decomposition.** There is a general duality relationship:
+
+$$\operatorname{prox}_{\alpha g}(x) + \alpha \cdot \operatorname{prox}_{g^*/\alpha}(x/\alpha) = x$$
+
+where $g^*$ is the convex conjugate of $g$. This means: if you know $\operatorname{prox}_{\alpha g}$, you get $\operatorname{prox}_{g^*}$ for free. For example, since we know the proximal operator of $\|\cdot\|_1$, Moreau gives us the proximal operator of $\|\cdot\|_\infty$ (its dual norm) without any additional work.
+
+---
+
+## The Unified Picture
+
+Starting from Post 1's geometric insight that the $\ell_1$ ball's corners produce sparsity, we now have the complete algorithmic story:
+
+The sparsity-inducing geometry of $\|\cdot\|_1$ translates into the soft-thresholding proximal operator, which ISTA applies at each step to handle the non-smooth regularizer exactly. FISTA adds Nesterov momentum to recover the optimal $O(1/k^2)$ rate — identical to AGD on smooth functions, now extended to the composite setting.
+
+The next post steps back to ask: what if we cannot use proximal operators at all? When the constraint set is complex (like the set of positive semidefinite matrices with bounded trace), both projections and proximal steps become expensive. The Frank-Wolfe algorithm offers an alternative that replaces these hard operations with a much simpler one.
+
+---
+
+*Part of the Mathematics of Data series — mathematical notes on EE-556 at EPFL.*

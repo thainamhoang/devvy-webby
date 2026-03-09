@@ -1,0 +1,207 @@
+---
+title: "Frank-Wolfe: Optimization Without Projections"
+date: "2025-03-15"
+series: "Mathematics of Data"
+seriesIndex: 7
+description: "When projecting onto the constraint set is expensive, Frank-Wolfe replaces the projection with a linear minimization — far cheaper and often sufficient. This post derives the algorithm, proves the O(1/k) convergence rate, and shows why it's the right tool for large-scale matrix problems."
+tags: ["optimization", "frank-wolfe", "constrained", "matrix-completion"]
+math: true
+---
+
+Posts 6 handled non-smooth objectives by splitting them into a smooth part and a non-smooth part with a tractable proximal operator. But there is a second class of problems where that approach fails: **constrained optimization** over sets where projection is computationally expensive.
+
+The Frank-Wolfe algorithm — also called the Conditional Gradient method — sidesteps projection entirely by replacing it with a simpler operation: minimizing a linear function over the constraint set. In many important cases, this linear minimization is orders of magnitude cheaper than projection.
+
+---
+
+## 1. The Projection Bottleneck
+
+Consider constrained optimization:
+
+$$\min_{x \in \mathcal{C}} f(x)$$
+
+The standard approach is **projected gradient descent**:
+
+$$x^{k+1} = \Pi_\mathcal{C}\!\left(x^k - \alpha \nabla f(x^k)\right)$$
+
+where $\Pi_\mathcal{C}(z) = \arg\min_{x \in \mathcal{C}} \|x - z\|^2$ is the Euclidean projection onto $\mathcal{C}$.
+
+For simple constraint sets, projection is cheap:
+- $\ell_2$ ball $\{x : \|x\| \leq r\}$: scale $x$ if $\|x\| > r$. $O(d)$.
+- Simplex $\{x \geq 0 : \sum_i x_i = 1\}$: $O(d \log d)$ by sorting.
+- Box $[a,b]^d$: clamp each coordinate. $O(d)$.
+
+But for the **nuclear norm ball** $\mathcal{C} = \{X \in \mathbb{R}^{m \times n} : \|X\|_* \leq \tau\}$, projection requires:
+1. Full SVD of the gradient-step matrix: $O(mn\min(m,n))$
+2. Soft-threshold the singular values
+3. Reconstruct
+
+For a $10000 \times 10000$ matrix, the full SVD costs $O(10^{12})$ operations — roughly $10^{12}$ flops per step. This is the bottleneck in matrix completion, collaborative filtering, and semidefinite relaxations.
+
+---
+
+## 2. The Frank-Wolfe Update
+
+Frank-Wolfe replaces the projection with a **Linear Minimization Oracle (LMO)**:
+
+$$s^k = \arg\min_{s \in \mathcal{C}} \langle \nabla f(x^k),\, s \rangle$$
+
+Then update via a convex combination:
+
+$$x^{k+1} = (1 - \gamma_k) x^k + \gamma_k s^k$$
+
+where $\gamma_k \in [0,1]$ is the step size.
+
+**Why does this stay in $\mathcal{C}$?** Because $x^k \in \mathcal{C}$, $s^k \in \mathcal{C}$, and $\mathcal{C}$ is convex. The convex combination of two points in a convex set is in the set. No projection needed.
+
+**Interpretation.** At each step, Frank-Wolfe:
+1. Linearizes $f$ around $x^k$: $f(x) \approx f(x^k) + \nabla f(x^k)^T(x - x^k)$
+2. Minimizes this linear approximation over $\mathcal{C}$ → finds $s^k$
+3. Steps toward $s^k$ from the current point
+
+The LMO finds the direction in $\mathcal{C}$ most aligned with the negative gradient — the "best feasible descent direction."
+
+---
+
+## 3. The Frank-Wolfe Gap
+
+Before the convergence proof, we need a certificate of optimality. Define the **Frank-Wolfe gap**:
+
+$$G^k = \langle \nabla f(x^k),\, x^k - s^k \rangle$$
+
+**Claim:** $G^k \geq 0$, with $G^k = 0$ iff $x^k$ is optimal.
+
+*Proof.* By definition of $s^k$: $\langle \nabla f(x^k), s^k \rangle \leq \langle \nabla f(x^k), x \rangle$ for all $x \in \mathcal{C}$. In particular, setting $x = x^*$:
+
+$$\langle \nabla f(x^k), s^k \rangle \leq \langle \nabla f(x^k), x^* \rangle$$
+
+Therefore:
+
+$$G^k = \langle \nabla f(x^k), x^k - s^k \rangle \geq \langle \nabla f(x^k), x^k - x^* \rangle \geq f(x^k) - f(x^*)$$
+
+where the last step uses convexity. So $G^k \geq f(x^k) - f^* \geq 0$. $\square$
+
+The gap $G^k$ is **computable** — we only need $x^k$ and $s^k$, both of which we have. This makes it a practical stopping criterion: when $G^k < \epsilon$, we know $f(x^k) - f^* < \epsilon$.
+
+### Per-Step Descent Bound
+
+**Lemma.** For $L$-smooth $f$ and step size $\gamma_k$:
+
+$$f(x^{k+1}) \leq f(x^k) - \gamma_k G^k + \frac{\gamma_k^2 L}{2} D^2$$
+
+where $D = \operatorname{diam}(\mathcal{C}) = \max_{x,y \in \mathcal{C}} \|x - y\|$.
+
+*Proof.* Apply $L$-smoothness at $x = x^k$, $y = x^{k+1} = (1-\gamma_k)x^k + \gamma_k s^k$:
+
+$$f(x^{k+1}) \leq f(x^k) + \nabla f(x^k)^T(x^{k+1} - x^k) + \frac{L}{2}\|x^{k+1} - x^k\|^2$$
+
+Since $x^{k+1} - x^k = \gamma_k(s^k - x^k)$:
+
+$$= f(x^k) + \gamma_k \nabla f(x^k)^T(s^k - x^k) + \frac{\gamma_k^2 L}{2}\|s^k - x^k\|^2$$
+
+$$= f(x^k) - \gamma_k G^k + \frac{\gamma_k^2 L}{2}\|s^k - x^k\|^2$$
+
+Bounding $\|s^k - x^k\| \leq D$ gives the result. $\square$
+
+The descent is controlled by two competing terms: $-\gamma_k G^k$ (progress toward optimum) and $\frac{\gamma_k^2 L D^2}{2}$ (error from the linear approximation). Optimizing over $\gamma_k$ gives $\gamma_k^* = G^k / (LD^2)$ and maximum decrease of $G_k^2 / (2LD^2)$.
+
+---
+
+## 4. Convergence: $O(1/k)$ Rate
+
+**Theorem.** Frank-Wolfe with step size $\gamma_k = \frac{2}{k+2}$ gives:
+
+$$f(x^k) - f^* \leq \frac{2LD^2}{k+2}$$
+
+*Proof by induction.* Let $h_k = f(x^k) - f^*$.
+
+**Base case:** $h_0 \leq \frac{2LD^2}{2} = LD^2$, which holds since $h_0 \leq \frac{LD^2}{2} \cdot \frac{h_0}{h_0}$... we verify this holds for a suitable initialization.
+
+**Inductive step:** Assume $h_k \leq \frac{2LD^2}{k+2}$. Using the descent lemma with $\gamma_k = \frac{2}{k+2}$ and $G^k \geq h_k$:
+
+$$h_{k+1} \leq h_k - \gamma_k h_k + \frac{\gamma_k^2 L D^2}{2}$$
+
+$$= h_k(1 - \gamma_k) + \frac{\gamma_k^2 LD^2}{2}$$
+
+$$\leq \frac{2LD^2}{k+2}\cdot \frac{k}{k+2} + \frac{4}{(k+2)^2}\cdot\frac{LD^2}{2}$$
+
+$$= \frac{LD^2}{(k+2)^2}\left(2k + 2\right) = \frac{2LD^2}{k+2} \cdot \frac{k+1}{k+2} \leq \frac{2LD^2}{k+3}$$
+
+completing the induction. $\square$
+
+**Note on the rate.** The $O(1/k)$ rate matches ISTA and smooth GD — but with a different constant involving the diameter $D$ rather than the initial distance $\|x^0 - x^*\|$. The price of avoiding projections is a dependence on the global geometry of $\mathcal{C}$ rather than just the local distance to the optimum.
+
+Frank-Wolfe cannot be accelerated to $O(1/k^2)$ in general — this is a provable limitation. The $O(1/k)$ rate is optimal for the conditional gradient method. The trade-off is the cheaper per-step cost.
+
+---
+
+## 5. The Nuclear Norm Application: Matrix Completion
+
+The motivating application is **matrix completion**: recover a low-rank matrix $M \in \mathbb{R}^{m \times n}$ from a subset $\Omega$ of its entries.
+
+$$\min_{X \in \mathbb{R}^{m \times n}} \|P_\Omega(X - M)\|_F^2 \quad \text{subject to} \quad \|X\|_* \leq \tau$$
+
+where $P_\Omega$ zeroes out entries not in $\Omega$.
+
+### LMO for the Nuclear Norm Ball
+
+$$s^k = \arg\min_{\|S\|_* \leq \tau} \langle G^k, S \rangle$$
+
+where $G^k = \nabla f(X^k) = -2P_\Omega(M - X^k)$ (the gradient of the squared loss).
+
+**Claim:** $s^k = -\tau u_1 v_1^T$, where $u_1, v_1$ are the top left and right singular vectors of $G^k$.
+
+*Proof.* The minimum of $\langle G, S \rangle$ over the nuclear norm ball is $-\tau\|G\|_2 = -\tau\sigma_{\max}(G)$, achieved by $S = -\tau \frac{G}{\|G\|_2}$... more precisely, using the duality between nuclear norm and spectral norm:
+
+$$\min_{\|S\|_* \leq \tau} \langle G, S \rangle = -\tau \max_{\|S\|_* \leq 1} \langle G, S \rangle = -\tau \|G\|_2 = -\tau \sigma_{\max}(G)$$
+
+The maximum $\langle G, S \rangle$ over the nuclear norm ball is achieved at $S = u_1 v_1^T$ (a rank-1 matrix formed from the top singular vectors). So the LMO solution is $s^k = -\tau u_1 v_1^T$. $\square$
+
+### Cost Comparison
+
+| Operation | Cost |
+|---|---|
+| Full SVD (for projection onto nuclear norm ball) | $O(mn\min(m,n))$ |
+| Top singular vector via power iteration (for LMO) | $O(mn)$ |
+
+For an $m \times n$ matrix, the LMO is $\min(m,n)$ times cheaper than projection. For a $10000 \times 10000$ matrix: projection costs $O(10^{12})$ flops, LMO costs $O(10^8)$ — a factor of $10^4$ cheaper per step.
+
+### Rank-1 Update Structure
+
+Each Frank-Wolfe step moves $X^{k+1}$ from $X^k$ toward $-\tau u_1 v_1^T$:
+
+$$X^{k+1} = (1-\gamma_k)X^k - \gamma_k \tau u_1 v_1^T$$
+
+This is a rank-1 update of the current iterate. If $X^k$ has rank $r$, then $X^{k+1}$ has rank at most $r+1$. Starting from $X^0 = 0$, after $k$ steps the iterate has rank at most $k$.
+
+This is the sparsity structure of Frank-Wolfe applied to matrix problems: the iterates are naturally low-rank, and the low-rank structure is preserved and grows incrementally. This is exactly right for matrix completion — the ground truth $M$ is low-rank, and we want our iterates to be low-rank approximations throughout training.
+
+---
+
+## 6. Sparsity in Frank-Wolfe
+
+For polyhedral constraint sets $\mathcal{C}$ (convex hulls of a finite set of vertices, like the simplex or the $\ell_1$ ball), the LMO always returns a **vertex** of $\mathcal{C}$. Each Frank-Wolfe step is a convex combination of $x^k$ and a vertex, so the iterates are convex combinations of at most $k+1$ vertices.
+
+This gives **natural sparsity**: after $k$ steps, $x^k$ is a combination of $k+1$ extreme points of $\mathcal{C}$. For the simplex, this means $x^k$ has at most $k+1$ non-zero coordinates.
+
+Compare to proximal methods on the same problem:
+- **Proximal/projection:** Dense iterates, but projection is the hard operation
+- **Frank-Wolfe:** Sparse iterates, LMO is easy
+
+The two approaches are complementary tools. When the constraint set has an easy proximal operator, use ISTA/FISTA. When the LMO is cheap and projection is hard, use Frank-Wolfe. For nuclear norm constraints on large matrices, Frank-Wolfe wins decisively.
+
+---
+
+## Looking Forward
+
+The pattern across the last three posts: optimization structure determines the right algorithm.
+
+- Composite $f + g$ with cheap prox → ISTA/FISTA
+- Constrained with cheap LMO → Frank-Wolfe
+- No structure at all, just convexity → subgradient descent ($O(1/\sqrt{k})$, unavoidable)
+
+Post 8 fills in this last case. Subgradients are the natural tool for fully non-smooth functions — but the price is real, and the $O(1/\sqrt{k})$ lower bound is not improvable. That post closes the convergence rate hierarchy for the first-order optimization landscape.
+
+---
+
+*Part of the Mathematics of Data series — mathematical notes on EE-556 at EPFL.*

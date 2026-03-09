@@ -1,0 +1,151 @@
+---
+title: "The Neural Tangent Kernel: Why Infinitely Wide Networks Are Convex"
+date: "2025-03-19"
+series: "Mathematics of Data"
+seriesIndex: 11
+description: "Neural network training is non-convex — yet gradient descent finds good solutions reliably. The Neural Tangent Kernel explains why: in the infinite-width limit, the loss landscape becomes convex, training dynamics reduce to a linear ODE, and convergence to zero training loss is guaranteed. This post derives the NTK, solves the ODE, and confronts the theory's limitations."
+tags: ["deep-learning", "ntk", "kernel-methods", "optimization"]
+math: true
+---
+
+Neural network training is, in general, a non-convex optimization problem. The loss $L(\theta) = \frac{1}{n}\sum_i \ell(f(x_i;\theta), y_i)$ is non-convex in $\theta$ because $f$ is a composition of nonlinear functions. Non-convex landscapes have local minima, saddle points, and flat regions — gradient descent could get stuck anywhere.
+
+Yet in practice, gradient descent on neural networks reliably finds solutions with near-zero training loss and good generalization. The empirical success far outstrips the theoretical guarantees.
+
+The **Neural Tangent Kernel (NTK)**, introduced by Jacot, Gabriel, and Hongler (2018), provides the most rigorous explanation we have. In the limit of infinite network width, the training dynamics simplify dramatically: the loss landscape becomes convex, the kernel remains constant throughout training, and convergence is guaranteed. This post derives that result and confronts its limitations.
+
+---
+
+## 1. The Non-Convexity Problem
+
+Consider a two-layer network:
+
+$$f(x; W_1, W_2) = W_2 \sigma(W_1 x)$$
+
+The loss $L(W_1, W_2) = \|f(x; W_1, W_2) - y\|^2$ is non-convex in $(W_1, W_2)$ jointly: scaling $W_2 \to 2W_2$ and $W_1 \to W_1/2$ preserves $f$ but changes the loss landscape geometry. Non-convexity means we cannot guarantee gradient descent finds a global minimum.
+
+Why does it work anyway? The answer requires understanding what happens as networks become very wide.
+
+---
+
+## 2. The Linearization Intuition
+
+Suppose the weights barely move during training — they stay close to their initialization $\theta_0$. Then we can Taylor-expand the network output:
+
+$$f(x; \theta) \approx f(x; \theta_0) + \nabla_\theta f(x; \theta_0)^T (\theta - \theta_0)$$
+
+In this approximation, $f$ is **linear in $\theta - \theta_0$**. Linear models have convex loss landscapes. If weights barely move, the optimization problem is essentially convex.
+
+When do weights barely move? When the network is very wide. In a wide network with $N$ neurons per layer, each weight contributes $O(1/N)$ to the output (to keep the output $O(1)$). The loss gradient with respect to each weight is $O(1/N)$, so each weight moves by $O(\eta/N)$ per gradient step. As $N \to \infty$, the weights move infinitesimally — the linearization becomes exact.
+
+This is the **lazy training** or **kernel regime**: the network computes a fixed feature map $\nabla_\theta f(x; \theta_0)$ and learns a linear model on top.
+
+---
+
+## 3. The Neural Tangent Kernel
+
+**Definition.** The Neural Tangent Kernel is:
+
+$$K(x, x') = \nabla_\theta f(x; \theta_0)^T \nabla_\theta f(x'; \theta_0) \in \mathbb{R}$$
+
+This is an inner product of the gradient vectors (the Jacobians of the network output with respect to parameters), evaluated at two inputs $x$ and $x'$.
+
+**Interpretation.** $K(x,x')$ measures how similarly inputs $x$ and $x'$ respond to weight perturbations. If changing weights has similar effects on $f(x;\theta)$ and $f(x';\theta)$, then $K(x,x')$ is large. The NTK is a kernel function — symmetric, positive semi-definite — and defines a reproducing kernel Hilbert space (RKHS).
+
+### The Infinite-Width Limit
+
+As network width $N \to \infty$, two remarkable things happen:
+
+**1. $K$ becomes deterministic.** At initialization, $\theta_0$ is random. The NTK is a sum of $O(N)$ terms, each $O(1/N)$, so by the law of large numbers it concentrates around its expectation. In the limit, $K(x,x')$ is a fixed deterministic kernel that depends only on the architecture, not on the random initialization.
+
+**2. $K$ stays constant during training.** Because each weight moves by $O(1/N)$ per step, the change in $\nabla_\theta f(x;\theta)$ per step is $O(1/N)$, and the change in $K(x,x')$ is $O(1/N^2)$. As $N \to \infty$, the kernel freezes at its initial value $K_0$. Training does not change the feature map — only the linear combination of features.
+
+These two properties make the infinite-width limit analytically tractable.
+
+---
+
+## 4. Gradient Flow Analysis: The Linear ODE
+
+Let $\hat{y}(t) \in \mathbb{R}^n$ be the vector of network outputs on the training set at time $t$, and $y$ the vector of true labels. Define the squared loss:
+
+$$L(\theta) = \frac{1}{2}\|\hat{y}(t) - y\|^2$$
+
+Under gradient flow $\dot{\theta} = -\nabla_\theta L(\theta)$, how does $\hat{y}(t)$ evolve?
+
+By the chain rule:
+
+$$\dot{\hat{y}}_i = \nabla_\theta f(x_i; \theta)^T \dot{\theta} = -\nabla_\theta f(x_i;\theta)^T \nabla_\theta L(\theta)$$
+
+The gradient of $L$ with respect to $\theta$ is:
+
+$$\nabla_\theta L = \sum_{j=1}^n (\hat{y}_j - y_j) \nabla_\theta f(x_j; \theta)$$
+
+Substituting:
+
+$$\dot{\hat{y}}_i = -\sum_{j=1}^n (\hat{y}_j - y_j) \underbrace{\nabla_\theta f(x_i;\theta)^T \nabla_\theta f(x_j;\theta)}_{K(x_i, x_j; \theta)}$$
+
+In matrix form, defining the **empirical NTK matrix** $\mathbf{K}(t) \in \mathbb{R}^{n \times n}$ with $[\mathbf{K}]_{ij} = K(x_i, x_j; \theta(t))$:
+
+$$\dot{\hat{y}}(t) = -\mathbf{K}(t)(\hat{y}(t) - y)$$
+
+In the infinite-width limit, $\mathbf{K}(t) = \mathbf{K}_0$ is constant. This becomes a **linear ODE**:
+
+$$\dot{\hat{y}}(t) = -\mathbf{K}_0 (\hat{y}(t) - y)$$
+
+### Solving the ODE
+
+This is a linear system with constant coefficients. The solution is:
+
+$$\hat{y}(t) - y = e^{-\mathbf{K}_0 t}(\hat{y}(0) - y)$$
+
+where $e^{-\mathbf{K}_0 t}$ is the matrix exponential. In the eigenbasis of $\mathbf{K}_0$ (which is symmetric PSD, so diagonalizable with non-negative eigenvalues $\lambda_1 \geq \cdots \geq \lambda_n \geq 0$):
+
+$$[\hat{y}(t) - y]_k = e^{-\lambda_k t} [\hat{y}(0) - y]_k$$
+
+Each component of the error decays exponentially at rate $\lambda_k$.
+
+**Key result:** If $\mathbf{K}_0 \succ 0$ (positive definite — all eigenvalues strictly positive), then $\lambda_{\min}(\mathbf{K}_0) > 0$ and all components decay to zero:
+
+$$\|\hat{y}(t) - y\|^2 \leq e^{-2\lambda_{\min}(\mathbf{K}_0) t} \|\hat{y}(0) - y\|^2 \to 0$$
+
+**Infinite-width networks achieve zero training loss under gradient flow, at a linear rate determined by the smallest eigenvalue of the NTK matrix.**
+
+This is the main theorem of NTK theory. The non-convex neural network training problem reduces, in the infinite-width limit, to fitting a kernel regression model with kernel $K_0$ — a convex problem with a known unique solution.
+
+---
+
+## 5. The NTK Spectrum and Generalization
+
+The eigenvalues of $\mathbf{K}_0$ carry information beyond just convergence speed.
+
+**Convergence:** Directions with large $\lambda_k$ converge fast (within $O(1/\lambda_k)$ time). Directions with small $\lambda_k$ converge slowly — they are effectively not learned within a finite training budget.
+
+**Generalization:** After training for time $T$, the network output is:
+
+$$\hat{y}(T) = y - e^{-\mathbf{K}_0 T}(y - \hat{y}(0)) \approx (\mathbb{I} - e^{-\mathbf{K}_0 T}) y$$
+
+In the eigenbasis, the $k$-th component of the learned function is $(1 - e^{-\lambda_k T}) y_k$. Large eigenvalue directions are learned faithfully; small eigenvalue directions are suppressed. The NTK performs **spectral filtering**: it implicitly regularizes by not learning directions where $\mathbf{K}_0$ has small eigenvalues.
+
+This connects NTK to classical kernel regression. The RKHS norm of the NTK solution bounds the generalization error — the same machinery as in kernel SVM or Gaussian process regression.
+
+**$\mu$P (Maximal Update Parameterization).** In standard parameterization, the NTK changes with width: the kernel $K$ scales differently in different layers. The $\mu$P parameterization (Yang & Hu, 2022) scales initialization variance and learning rates so that $K$ stabilizes as width grows. This enables **hyperparameter transfer**: the optimal learning rate found on a small model transfers directly to a large model, saving enormous compute in practice.
+
+---
+
+## 6. Limitations: What NTK Theory Gets Wrong
+
+The NTK theory is mathematically beautiful and provides our most rigorous framework for understanding neural network training. But it is a theory of a regime neural networks rarely operate in.
+
+**Lazy training vs. feature learning.** In the NTK regime, weights barely move — the feature map $\nabla_\theta f(x;\theta)$ is fixed at initialization. Real networks learn features: early layers develop edge detectors, mid layers develop texture detectors, and so on. This is **representation learning**, and it requires weights to move significantly. NTK theory misses it entirely.
+
+**Depth.** In the infinite-width limit, the NTK kernel $K_0$ is the same regardless of depth (for appropriate initialization). But depth clearly matters in practice — a 1-layer network with width $10^6$ performs much worse than a 100-layer network on natural images. NTK theory predicts no benefit to depth.
+
+**Finite width.** For finite-width networks, $\mathbf{K}(t)$ changes during training. The linear ODE becomes nonlinear, and the nice closed-form solution breaks down. Corrections are $O(1/N)$ but can compound over long training.
+
+**Practical learning rates.** NTK theory holds for infinitesimally small learning rates (continuous gradient flow). Practical training uses large discrete steps, which can push networks out of the lazy regime.
+
+The NTK is best understood as a rigorous baseline: it describes the simplest possible regime of neural network training, and real networks deviate from it in exactly the ways that make them powerful. Understanding those deviations is the frontier of deep learning theory.
+
+---
+
+*Part of the Mathematics of Data series — mathematical notes on EE-556 at EPFL.*

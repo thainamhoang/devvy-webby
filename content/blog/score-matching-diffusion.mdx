@@ -1,0 +1,183 @@
+---
+title: "Score Matching and Diffusion Models: Generating Data by Learning to Denoise"
+date: "2025-03-20"
+series: "Mathematics of Data"
+seriesIndex: 12
+description: "Modern generative AI rests on a single mathematical insight: the gradient of a probability distribution's log-density is equivalent to a denoising operator. This post derives Hyvärinen's score matching trick, Tweedie's formula, and the stochastic differential equations behind diffusion models."
+tags: ["generative-models", "diffusion", "score-matching", "sde"]
+math: true
+---
+
+Stable Diffusion, DALL-E, and Sora share a common mathematical foundation that is surprisingly clean. At its core: you cannot learn a probability distribution directly, but you can learn its **score** — the gradient of its log-density. And learning the score turns out to be equivalent to learning to denoise a corrupted signal. This post derives that equivalence from scratch.
+
+---
+
+## 1. The Generative Modeling Problem
+
+**Goal.** Given i.i.d. samples $\{x_i\}_{i=1}^n$ from an unknown distribution $p_{\text{data}}$ on $\mathbb{R}^d$, learn a model that can generate new samples from $p_{\text{data}}$.
+
+**The maximum likelihood approach.** Fit a parametric model $p_\theta(x) = \frac{e^{-E_\theta(x)}}{Z(\theta)}$ where $E_\theta$ is an energy function and $Z(\theta) = \int e^{-E_\theta(x)} dx$ is the normalizing constant. Maximize:
+
+$$\log p_\theta(x) = -E_\theta(x) - \log Z(\theta)$$
+
+The problem: $Z(\theta)$ is a $d$-dimensional integral over $\mathbb{R}^d$. For $d = 512 \times 512 \times 3 \approx 786,000$ (an image), this integral is completely intractable. Every gradient step on $\log p_\theta$ requires estimating $Z(\theta)$ — which requires samples from $p_\theta$ — which requires knowing $Z(\theta)$. A circular dependency.
+
+**The score-based escape.** Instead of learning $p_\theta$ directly, learn its **score function**:
+
+$$s(x) = \nabla_x \log p(x) = -\nabla_x E(x) - \underbrace{\nabla_x \log Z}_{= 0}$$
+
+The normalizing constant $Z$ drops out when we differentiate — the score does not depend on $Z$. If we can learn $s(x)$, we can generate samples without ever computing $Z$.
+
+---
+
+## 2. The Score Function and Langevin Dynamics
+
+The score $s(x) = \nabla_x \log p(x)$ is a vector field on $\mathbb{R}^d$. At any point $x$, it points in the direction of steepest increase of $\log p$ — toward regions of higher probability density.
+
+**Langevin dynamics** uses the score to generate samples. Starting from any $x_0$, iterate:
+
+$$x_{t+1} = x_t + \frac{\alpha}{2} s(x_t) + \sqrt{\alpha}\, \varepsilon_t, \qquad \varepsilon_t \sim \mathcal{N}(0, I)$$
+
+Under mild conditions, as $t \to \infty$ and $\alpha \to 0$, the distribution of $x_t$ converges to $p$. The step $\frac{\alpha}{2}s(x_t)$ drifts toward high-density regions; the noise $\sqrt{\alpha}\varepsilon_t$ prevents collapse to a single mode and allows exploration.
+
+No $Z$ appears anywhere. If we have the score, we can sample.
+
+---
+
+## 3. Hyvärinen's Score Matching Trick
+
+We want to learn $s_\theta(x) \approx s(x) = \nabla_x \log p_{\text{data}}(x)$ by minimizing the Fisher divergence:
+
+$$J(\theta) = \frac{1}{2}\mathbb{E}_{p_{\text{data}}}\!\left[\|s_\theta(x) - \nabla_x \log p_{\text{data}}(x)\|^2\right]$$
+
+The problem: $\nabla_x \log p_{\text{data}}(x)$ is unknown (it's what we're trying to learn). We cannot minimize $J(\theta)$ directly.
+
+**Hyvärinen's key insight (2005):** Expand $J(\theta)$:
+
+$$J(\theta) = \frac{1}{2}\mathbb{E}\!\left[\|s_\theta(x)\|^2\right] - \mathbb{E}\!\left[s_\theta(x)^T \nabla_x \log p_{\text{data}}(x)\right] + \text{const}$$
+
+The constant $\frac{1}{2}\mathbb{E}[\|\nabla_x \log p_{\text{data}}\|^2]$ doesn't depend on $\theta$. The problematic term is the cross-term $\mathbb{E}[s_\theta(x)^T \nabla_x \log p_{\text{data}}(x)]$.
+
+Apply **integration by parts** to the cross-term. Writing $p = p_{\text{data}}$ for brevity:
+
+$$\mathbb{E}_p[s_\theta(x)^T \nabla_x \log p(x)] = \int s_\theta(x)^T \nabla_x \log p(x) \cdot p(x)\, dx$$
+
+$$= \int s_\theta(x)^T \nabla_x p(x)\, dx = \int s_\theta(x)^T \nabla_x p(x)\, dx$$
+
+Integrating by parts component-wise (assuming $p(x) \to 0$ as $\|x\| \to \infty$, so boundary terms vanish):
+
+$$\int [s_\theta(x)]_j \frac{\partial p(x)}{\partial x_j}\, dx = -\int \frac{\partial [s_\theta(x)]_j}{\partial x_j} p(x)\, dx$$
+
+Summing over $j$:
+
+$$\mathbb{E}_p[s_\theta(x)^T \nabla_x \log p(x)] = -\mathbb{E}_p[\operatorname{tr}(\nabla_x s_\theta(x))]$$
+
+Substituting back:
+
+$$\boxed{J(\theta) = \mathbb{E}_{p_{\text{data}}}\!\left[\operatorname{tr}(\nabla_x s_\theta(x)) + \frac{1}{2}\|s_\theta(x)\|^2\right] + \text{const}}$$
+
+This is the **score matching objective**. It depends only on $s_\theta$ and its Jacobian $\nabla_x s_\theta$, both evaluated at data points $x \sim p_{\text{data}}$. No $p_{\text{data}}$ appears explicitly — only samples from it. We can minimize this with stochastic gradient descent.
+
+The trace term $\operatorname{tr}(\nabla_x s_\theta(x))$ is the divergence of the score field. Computing it naively requires $d$ backpropagation passes (one per output dimension). In practice, Hutchinson's estimator is used: $\operatorname{tr}(\nabla_x s_\theta) \approx \varepsilon^T \nabla_x s_\theta \varepsilon$ for $\varepsilon \sim \mathcal{N}(0,I)$, reducing to a single pass.
+
+---
+
+## 4. Denoising Score Matching and Tweedie's Formula
+
+Score matching as derived above has a problem: $p_{\text{data}}$ is typically concentrated on a low-dimensional manifold (natural images are not uniformly distributed in $\mathbb{R}^{786000}$). The score $\nabla_x \log p_{\text{data}}$ is undefined off the manifold. Langevin dynamics starting away from the manifold gets no useful signal.
+
+**The fix: add noise.** Instead of matching the score of $p_{\text{data}}$, match the score of the noisy distribution $p_\sigma(\tilde{x}) = \int p_{\text{data}}(x) \mathcal{N}(\tilde{x}; x, \sigma^2 I)\, dx$. This is $p_{\text{data}}$ convolved with Gaussian noise — it has full support on $\mathbb{R}^d$.
+
+For the Gaussian noise kernel $q_\sigma(\tilde{x}|x) = \mathcal{N}(\tilde{x}; x, \sigma^2 I)$, **Tweedie's formula** gives:
+
+$$\nabla_{\tilde{x}} \log p_\sigma(\tilde{x}) = \frac{\mathbb{E}[x|\tilde{x}] - \tilde{x}}{\sigma^2}$$
+
+*Proof.* By Bayes:
+
+$$p_\sigma(\tilde{x}) = \int p_{\text{data}}(x) q_\sigma(\tilde{x}|x)\, dx$$
+
+Differentiating:
+
+$$\nabla_{\tilde{x}} \log p_\sigma(\tilde{x}) = \frac{\nabla_{\tilde{x}} p_\sigma(\tilde{x})}{p_\sigma(\tilde{x})} = \frac{\int p_{\text{data}}(x) \nabla_{\tilde{x}} q_\sigma(\tilde{x}|x)\, dx}{p_\sigma(\tilde{x})}$$
+
+For Gaussian $q_\sigma$: $\nabla_{\tilde{x}} \log q_\sigma(\tilde{x}|x) = \frac{x - \tilde{x}}{\sigma^2}$, so $\nabla_{\tilde{x}} q_\sigma(\tilde{x}|x) = \frac{x-\tilde{x}}{\sigma^2} q_\sigma(\tilde{x}|x)$.
+
+Therefore:
+
+$$\nabla_{\tilde{x}} \log p_\sigma(\tilde{x}) = \frac{\int (x-\tilde{x})\, p_{\text{data}}(x) q_\sigma(\tilde{x}|x)\, dx}{\sigma^2 p_\sigma(\tilde{x})} = \frac{\mathbb{E}[x|\tilde{x}] - \tilde{x}}{\sigma^2} \qquad \square$$
+
+**This is the central identity of diffusion models.** The score of the noisy distribution equals the (expected clean signal minus the noisy signal) divided by $\sigma^2$. Equivalently:
+
+$$\mathbb{E}[x|\tilde{x}] = \tilde{x} + \sigma^2 \nabla_{\tilde{x}} \log p_\sigma(\tilde{x})$$
+
+**Learning the score $\equiv$ learning to denoise.** If we parameterize a denoiser $D_\theta(\tilde{x}, \sigma) \approx \mathbb{E}[x|\tilde{x}]$, then the implied score estimate is:
+
+$$s_\theta(\tilde{x}, \sigma) = \frac{D_\theta(\tilde{x},\sigma) - \tilde{x}}{\sigma^2}$$
+
+The **denoising score matching** objective — minimize over $\theta$:
+
+$$J_{\text{DSM}}(\theta) = \mathbb{E}_{x \sim p_{\text{data}},\, \varepsilon \sim \mathcal{N}(0,I)}\!\left[\left\|D_\theta(x + \sigma\varepsilon,\, \sigma) - x\right\|^2\right]$$
+
+This is a standard supervised learning objective: given noisy input $\tilde{x} = x + \sigma\varepsilon$, predict the clean $x$. No score or log-density appears explicitly.
+
+---
+
+## 5. Diffusion Models: Many Noise Levels
+
+A single noise level $\sigma$ is not enough. At large $\sigma$, the noisy distribution has full support but is far from $p_{\text{data}}$. At small $\sigma$, it is close to $p_{\text{data}}$ but has poor coverage. We need all scales simultaneously.
+
+### The Forward Process
+
+Define a continuous-time noise schedule from $t=0$ (clean) to $t=T$ (pure noise):
+
+$$dx = f(x,t)\, dt + g(t)\, dW$$
+
+where $W$ is a Wiener process (Brownian motion). For **DDPM** (Ho et al., 2020), the specific choice $f(x,t) = -\frac{\beta(t)}{2}x$ and $g(t)^2 = \beta(t)$ gives a closed-form marginal:
+
+$$q(x_t | x_0) = \mathcal{N}\!\left(\sqrt{\bar{\alpha}_t}\, x_0,\; (1 - \bar{\alpha}_t) I\right)$$
+
+where $\bar{\alpha}_t = \exp\!\left(-\int_0^t \beta(s)\, ds\right)$ is the noise schedule. As $t \to T$, $\bar{\alpha}_T \approx 0$ and $x_T \approx \mathcal{N}(0,I)$ — pure noise.
+
+At any intermediate time $t$, we can write $x_t = \sqrt{\bar{\alpha}_t}\, x_0 + \sqrt{1-\bar{\alpha}_t}\, \varepsilon$ with $\varepsilon \sim \mathcal{N}(0,I)$. Tweedie's formula applies at each $t$ with $\sigma_t^2 = 1 - \bar{\alpha}_t$:
+
+$$\nabla_{x_t} \log q(x_t) = \frac{\mathbb{E}[x_0 | x_t] - x_t / \sqrt{\bar{\alpha}_t}}{(1-\bar{\alpha}_t)/\sqrt{\bar{\alpha}_t}} \approx -\frac{\varepsilon}{\sqrt{1-\bar{\alpha}_t}}$$
+
+### The Reverse Process
+
+**Anderson's formula** (1982) gives the reverse-time SDE:
+
+$$dx = \left[f(x,t) - g(t)^2 \nabla_x \log p_t(x)\right] dt + g(t)\, d\bar{W}$$
+
+where $\bar{W}$ is a reverse-time Wiener process. This SDE runs backward from $t=T$ to $t=0$, progressively removing noise.
+
+We learn a neural network $s_\theta(x_t, t) \approx \nabla_{x_t} \log p_t(x_t)$ for all $t$ simultaneously by minimizing:
+
+$$\mathcal{L}(\theta) = \mathbb{E}_{t, x_0, \varepsilon}\!\left[\left\|s_\theta\!\left(\sqrt{\bar{\alpha}_t}\, x_0 + \sqrt{1-\bar{\alpha}_t}\,\varepsilon,\; t\right) + \frac{\varepsilon}{\sqrt{1-\bar{\alpha}_t}}\right\|^2\right]$$
+
+Equivalently, learn to predict the noise $\varepsilon$ from the noisy image $x_t$. This is the **denoising diffusion** training objective.
+
+**Sampling:** Start from $x_T \sim \mathcal{N}(0,I)$. Integrate the reverse SDE from $t=T$ to $t=0$ using the learned $s_\theta$, producing a sample from (approximately) $p_{\text{data}}$.
+
+---
+
+## 6. Comparison to GANs
+
+Both GANs and diffusion models aim to sample from $p_{\text{data}}$.
+
+| | GANs | Diffusion Models |
+|---|---|---|
+| Objective | Minimax game $\min_G \max_D$ | Denoising regression (MSE) |
+| Training stability | Unstable; mode collapse | Stable; standard gradient descent |
+| Sample quality | Fast (single pass) | Slow ($T$ denoising steps) |
+| Theoretical grounding | Wasserstein distance | Maximum likelihood via score |
+| Scalability | Hard to scale | Scales well (U-Net + attention) |
+
+GANs minimize the Wasserstein distance between $p_\theta$ and $p_{\text{data}}$ via an adversarial game — mathematically elegant but notoriously difficult to train. The generator and discriminator must stay in balance; if the discriminator dominates, gradients vanish; if the generator dominates, mode collapse occurs.
+
+Diffusion models reduce generation to a sequence of denoising steps, each of which is a standard regression problem. No adversarial game, no mode collapse, no balancing act. The price is speed: generating one image requires $T = 1000$ denoising steps. Recent work (consistency models, DDIM, flow matching) reduces this to 1–10 steps while preserving quality.
+
+Score matching is the theoretical unification: both GANs and diffusion models are estimating properties of $p_{\text{data}}$, just through different mathematical lenses.
+
+---
+
+*Part of the Mathematics of Data series — mathematical notes on EE-556 at EPFL.*

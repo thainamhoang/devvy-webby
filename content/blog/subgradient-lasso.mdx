@@ -1,0 +1,203 @@
+---
+title: "Subgradients and the Lasso: When Functions Have Kinks"
+date: "2025-03-16"
+series: "Mathematics of Data"
+seriesIndex: 8
+description: "The gradient fails at kinks. The subgradient is its correct generalization — a set-valued object that captures all valid linearizations of a convex function at non-smooth points. This post derives the subdifferential calculus, works out the KKT conditions for Lasso, and proves the O(1/√k) lower bound for non-smooth optimization."
+tags: ["optimization", "subgradients", "lasso", "non-smooth", "convexity"]
+math: true
+---
+
+Consider $f(x) = |x|$ at $x = 0$. The left derivative is $-1$; the right derivative is $+1$. The gradient does not exist. Yet $f$ is convex, has a unique minimum at $x = 0$, and is perfectly well-behaved in every other sense. Gradient descent cannot proceed — but clearly optimization should be possible.
+
+The **subgradient** resolves this by generalizing the gradient from a single vector to a set. This post develops the subdifferential calculus, uses it to derive the KKT conditions for Lasso, and proves that the $O(1/\sqrt{k})$ convergence rate of subgradient descent is not a deficiency of the algorithm but a fundamental lower bound.
+
+This post pairs with Post 6: there we handled non-smooth regularizers by applying their proximal operators exactly, bypassing subgradients. Here we ask what happens without that structure — and see the full cost of non-smoothness.
+
+---
+
+## 1. Why the Gradient Fails at Kinks
+
+The gradient at $x$ is the unique vector $g$ satisfying:
+
+$$\lim_{y \to x} \frac{f(y) - f(x) - g^T(y-x)}{\|y-x\|} = 0$$
+
+At $x = 0$ for $f(x) = |x|$: the limit from the right gives $g = 1$, from the left gives $g = -1$. No single $g$ satisfies both simultaneously. The gradient does not exist.
+
+However, the **directional derivative** always exists for convex functions. Define:
+
+$$f'(x; d) = \lim_{t \to 0^+} \frac{f(x + td) - f(x)}{t}$$
+
+For $f(x) = |x|$ at $x=0$: $f'(0; d) = |d|$ for all $d$. The function has well-defined directional behavior — it just isn't captured by a single vector.
+
+The directional derivative is positively homogeneous ($f'(x; td) = t f'(x;d)$ for $t > 0$) and subadditive ($f'(x; d_1 + d_2) \leq f'(x; d_1) + f'(x; d_2)$). By the Hahn-Banach theorem, there exists a linear functional (a vector $g$) that minorizes the directional derivative: $g^T d \leq f'(x; d)$ for all $d$. These vectors are the subgradients.
+
+---
+
+## 2. The Subdifferential
+
+**Definition.** A vector $g \in \mathbb{R}^d$ is a **subgradient** of $f$ at $x$ if:
+
+$$f(y) \geq f(x) + g^T(y - x) \qquad \text{for all } y \in \mathbb{R}^d$$
+
+The **subdifferential** $\partial f(x)$ is the set of all subgradients at $x$.
+
+This is identical to the first-order convexity condition from Post 1 — except now we allow a *set* of valid linearizations instead of requiring a unique one. When $f$ is differentiable at $x$, then $\partial f(x) = \{\nabla f(x)\}$ — the subdifferential is a singleton and coincides with the gradient.
+
+### Computing $\partial|x|$
+
+For $x > 0$: $f$ is differentiable, $\partial f(x) = \{1\}$.
+
+For $x < 0$: $f$ is differentiable, $\partial f(x) = \{-1\}$.
+
+For $x = 0$: We need all $g$ such that $|y| \geq gy$ for all $y \in \mathbb{R}$. This requires $g \leq 1$ (from $y > 0$) and $g \geq -1$ (from $y < 0$). So $\partial f(0) = [-1, 1]$.
+
+Visually: at a smooth point, the subdifferential is the single tangent line slope. At the kink at $x=0$, it is the entire interval of slopes of lines that pass through $(0,0)$ and lie below the graph of $|x|$.
+
+```
+        |x|
+         |    /
+         |   /
+         |  /  ← slopes in ∂f(0) = [-1,1]
+         | /
+---------0---------
+        /|
+       / |
+```
+
+### Computing $\partial\|x\|_1$
+
+Since $\|x\|_1 = \sum_i |x_i|$, the subdifferential is the Cartesian product of coordinate subdifferentials:
+
+$$\partial\|x\|_1 = \partial|x_1| \times \cdots \times \partial|x_d|$$
+
+So $g \in \partial\|x\|_1$ iff for each coordinate $i$:
+
+$$g_i = \begin{cases} \operatorname{sign}(x_i) & \text{if } x_i \neq 0 \\ g_i \in [-1,1] & \text{if } x_i = 0 \end{cases}$$
+
+At a sparse vector (with many $x_i = 0$), the subdifferential is a high-dimensional hypercube in the zero-coordinate directions — a whole family of valid linearizations.
+
+### Subdifferential Calculus
+
+The standard calculus rules extend naturally:
+
+**Sum rule:** $\partial(f + h)(x) = \partial f(x) + \partial h(x)$ (Minkowski sum), when $f$ or $h$ is continuous.
+
+**Chain rule:** If $F(x) = f(Ax + b)$, then $\partial F(x) = A^T \partial f(Ax+b)$.
+
+**Optimality:** $x^*$ minimizes $f$ iff $0 \in \partial f(x^*)$.
+
+This last condition is the master optimality criterion for non-smooth convex optimization.
+
+---
+
+## 3. Lasso: KKT Conditions via Subdifferentials
+
+The Lasso problem:
+
+$$\min_{x \in \mathbb{R}^d} F(x) = \frac{1}{2}\|Ax - b\|^2 + \lambda\|x\|_1$$
+
+Optimality: $0 \in \partial F(x^*)$.
+
+By the sum rule: $\partial F(x^*) = \nabla\!\left(\frac{1}{2}\|Ax^*-b\|^2\right) + \lambda\partial\|x^*\|_1 = A^T(Ax^*-b) + \lambda\partial\|x^*\|_1$.
+
+So $x^*$ is optimal iff:
+
+$$0 \in A^T(Ax^* - b) + \lambda\partial\|x^*\|_1$$
+
+Writing this coordinate-by-coordinate (the KKT conditions for Lasso):
+
+$$[A^T(Ax^* - b)]_i = \begin{cases} -\lambda\operatorname{sign}(x^*_i) & \text{if } x^*_i \neq 0 \\ \text{something in } [-\lambda, \lambda] & \text{if } x^*_i = 0 \end{cases}$$
+
+The second condition tells us exactly when coordinate $i$ is zero at the optimum: the $i$-th residual correlation $|[A^T(Ax^*-b)]_i| \leq \lambda$. When the residual has small correlation with feature $i$, that feature is excluded from the model.
+
+**Connection to soft thresholding.** The proximal step from Post 6, $x^{k+1} = \operatorname{prox}_{\alpha g}(x^k - \alpha A^T(Ax^k-b))$, is precisely solving the optimality condition above for coordinate updates. The soft-thresholding operation zeroes out coordinates where $|[A^T(Ax^k - b)]_i| \leq \alpha\lambda$ — exactly the KKT condition. ISTA is the algorithm that enforces the subdifferential optimality conditions iteratively.
+
+This completes the circle from Post 1: the $\ell_1$ ball's geometry (corners on axes) → the subdifferential of $\|\cdot\|_1$ is large at zero → the KKT conditions force small-correlation features to exactly zero → sparse solutions.
+
+---
+
+## 4. Subgradient Descent
+
+Given $g^k \in \partial f(x^k)$, the subgradient descent update is:
+
+$$x^{k+1} = x^k - \alpha_k g^k$$
+
+This looks identical to gradient descent but there is a critical difference.
+
+**Subgradient descent is not a descent method.** A gradient step on a smooth function always decreases $f$ (for small enough $\alpha$). A subgradient step can *increase* $f$. The subgradient at a non-smooth point points "away from" the minimizer in a generalized sense, but the resulting step can move uphill in function value.
+
+Because of this, we track the **best iterate**:
+
+$$f_{\text{best}}^k = \min_{0 \leq j \leq k} f(x^j)$$
+
+### Convergence Analysis
+
+**Theorem.** For convex $f$ with $\|g\| \leq G$ for all $g \in \partial f(x)$, subgradient descent satisfies:
+
+$$f_{\text{best}}^k - f^* \leq \frac{\|x^0 - x^*\|^2 + G^2 \sum_{j=0}^{k-1} \alpha_j^2}{2\sum_{j=0}^{k-1} \alpha_j}$$
+
+*Proof.* Track $\|x^{k+1} - x^*\|^2$:
+
+$$\|x^{k+1} - x^*\|^2 = \|x^k - \alpha_k g^k - x^*\|^2 = \|x^k - x^*\|^2 - 2\alpha_k (g^k)^T(x^k - x^*) + \alpha_k^2\|g^k\|^2$$
+
+From the subgradient definition: $(g^k)^T(x^k - x^*) \geq f(x^k) - f(x^*) = f(x^k) - f^*$.
+
+So: $\|x^{k+1}-x^*\|^2 \leq \|x^k-x^*\|^2 - 2\alpha_k(f(x^k)-f^*) + \alpha_k^2 G^2$.
+
+Rearranging: $2\alpha_k(f(x^k)-f^*) \leq \|x^k-x^*\|^2 - \|x^{k+1}-x^*\|^2 + \alpha_k^2 G^2$.
+
+Sum from $j=0$ to $k-1$ and telescope:
+
+$$2\sum_{j=0}^{k-1}\alpha_j(f(x^j)-f^*) \leq \|x^0-x^*\|^2 + G^2\sum_{j=0}^{k-1}\alpha_j^2$$
+
+Since $f_{\text{best}}^k \leq f(x^j)$ for all $j$:
+
+$$2\left(\sum_{j=0}^{k-1}\alpha_j\right)(f_{\text{best}}^k - f^*) \leq \|x^0-x^*\|^2 + G^2\sum_{j=0}^{k-1}\alpha_j^2$$
+
+Dividing gives the result. $\square$
+
+**With $\alpha_k = R/(G\sqrt{k})$** where $R = \|x^0-x^*\|$:
+
+$$\sum_{j=1}^k \alpha_j \approx \frac{2R}{G}\sqrt{k}, \qquad \sum_{j=1}^k \alpha_j^2 \approx \frac{R^2}{G^2}\log k$$
+
+So: $f_{\text{best}}^k - f^* \leq \frac{R^2 + R^2 \log k}{2 \cdot \frac{2R}{G}\sqrt{k}} \approx \frac{RG}{2\sqrt{k}} = O\!\left(\frac{1}{\sqrt{k}}\right)$
+
+With the optimal fixed-budget step $\alpha = \frac{R}{G\sqrt{k}}$ (requires knowing $k$ in advance): exactly $\frac{RG}{\sqrt{k}}$.
+
+---
+
+## 5. The Lower Bound: $O(1/\sqrt{k})$ is Optimal
+
+The $O(1/\sqrt{k})$ rate is not a shortcoming of subgradient descent — it is provably the best any first-order method can achieve on non-smooth problems.
+
+**Theorem (Lower Bound).** For any first-order method and any $k \geq 1$, there exists a $G$-Lipschitz convex function $f$ such that:
+
+$$f(x^k) - f^* \geq \frac{G\|x^0 - x^*\|}{2\sqrt{k+1}}$$
+
+*Proof sketch.* The hard instance is $f(x) = G \cdot \max_{1 \leq i \leq k+1} x_i$ (or equivalently $G\|x\|_\infty$ shifted). Any first-order method, after $k$ steps starting from $x^0 = 0$, lies in the span of $\{\nabla f(x^0), \ldots, \nabla f(x^{k-1})\}$. By the structure of $f$, this span cannot capture enough coordinates to get within $\frac{G\|x^0-x^*\|}{2\sqrt{k+1}}$ of the minimum. $\square$
+
+Subgradient descent matches this lower bound. It is **optimal** for the class of $G$-Lipschitz convex functions.
+
+---
+
+## The Full Convergence Hierarchy
+
+We now have the complete map of first-order convergence rates:
+
+| Class | Best Algorithm | Rate | Lower Bound |
+|---|---|---|---|
+| $L$-smooth, convex | AGD | $O(1/k^2)$ | $\Omega(1/k^2)$ ✓ |
+| $L$-smooth, $\mu$-SC | AGD | $O((1-1/\sqrt{\kappa})^k)$ | Optimal ✓ |
+| $L$-smooth + non-smooth $g$ | FISTA | $O(1/k^2)$ | $\Omega(1/k^2)$ ✓ |
+| $G$-Lipschitz, convex | Subgradient | $O(1/\sqrt{k})$ | $\Omega(1/\sqrt{k})$ ✓ |
+
+Smoothness is worth exactly a factor of $k^{3/2}$ in convergence rate: AGD gives $O(1/k^2)$ vs $O(1/\sqrt{k})$ for non-smooth. When a function has composite structure (smooth $+$ non-smooth), exploiting that structure via FISTA recovers the smooth rate entirely.
+
+The message is architectural: **structure is speed**. Gradient descent, subgradient descent, ISTA, FISTA, Frank-Wolfe — these are not just different algorithms for the same problem. They are the right tools for different problem structures, each achieving a rate that matches the information-theoretic lower bound for its class.
+
+The next post steps into deep learning theory, where these optimization foundations meet a genuinely mysterious phenomenon: models with more parameters than data that somehow generalize better as they get bigger.
+
+---
+
+*Part of the Mathematics of Data series — mathematical notes on EE-556 at EPFL.*

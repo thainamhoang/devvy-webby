@@ -1,0 +1,174 @@
+---
+title: "Adversarial Robustness: Minimax Games, PGD, and the Cost of Security"
+date: "2025-03-21"
+series: "Mathematics of Data"
+seriesIndex: 13
+description: "Neural networks can be fooled by imperceptible perturbations. Defending against them is a minimax optimization problem. This post derives FGSM and PGD attacks, proves Danskin's theorem to justify adversarial training, analyzes catastrophic overfitting and the GradAlign fix, and quantifies the robustness-accuracy trade-off."
+tags: ["adversarial", "robustness", "minimax", "optimization"]
+math: true
+---
+
+A neural network that classifies images with 95% accuracy can be fooled — with probability nearly 1 — by adding carefully crafted noise invisible to the human eye. A stop sign altered by a few pixels becomes a speed limit sign. A panda becomes a gibbon. The noise is imperceptible; the misclassification is consistent and targeted.
+
+This is not a quirk of specific models. It is a structural feature of high-dimensional classifiers, and it has implications for every safety-critical deployment of machine learning. Understanding it requires optimization theory: the attack is an optimization problem, the defense is a minimax problem, and the failure modes are convergence phenomena.
+
+---
+
+## 1. Adversarial Examples
+
+**Definition.** Given input $x$ with true label $y$ and classifier $f_\theta$, an **adversarial example** is:
+
+$$x_{\text{adv}} = x + \delta \quad \text{where} \quad \|\delta\|_\infty \leq \epsilon \quad \text{but} \quad f_\theta(x_{\text{adv}}) \neq y$$
+
+The perturbation $\delta$ is small in $\ell_\infty$ norm — each pixel changes by at most $\epsilon$ (typically $\epsilon = 8/255$ for images in $[0,1]^d$). This is imperceptible to human vision.
+
+**Why does this work geometrically?** In high dimensions, the decision boundary of a neural network is close to almost every data point. For a $d$-dimensional input, the $\ell_\infty$ ball of radius $\epsilon$ contains $2^d$ corners. Even if the boundary is far in Euclidean distance, a short $\ell_\infty$ step can cross it. The adversary exploits this geometry.
+
+### FGSM: Fast Gradient Sign Method
+
+The **Fast Gradient Sign Method** (Goodfellow et al., 2014) finds an adversarial perturbation in one step by maximizing the loss linearly:
+
+$$\delta = \epsilon \cdot \operatorname{sign}(\nabla_x L(x, y; \theta))$$
+
+*Derivation.* We want to maximize $L(x+\delta, y; \theta)$ subject to $\|\delta\|_\infty \leq \epsilon$. Linearizing $L$ around $x$:
+
+$$L(x+\delta, y; \theta) \approx L(x, y; \theta) + \nabla_x L(x,y;\theta)^T \delta$$
+
+Maximizing the linear term over $\|\delta\|_\infty \leq \epsilon$ — this is an $\ell_\infty$-constrained linear program, solved by taking each coordinate of $\delta$ to its maximum magnitude in the sign of the corresponding gradient coordinate:
+
+$$\delta^* = \epsilon \cdot \operatorname{sign}(\nabla_x L)$$
+
+This gives the maximum increase in loss (under the linear approximation) with a single gradient evaluation. Cost: one forward-backward pass.
+
+---
+
+## 2. PGD: Projected Gradient Descent Attack
+
+FGSM's linear approximation is crude. The **PGD attack** (Madry et al., 2018) runs multi-step gradient ascent on the loss, projecting back to the $\ell_\infty$ ball after each step:
+
+$$\delta^{t+1} = \Pi_{\|\cdot\|_\infty \leq \epsilon}\!\left(\delta^t + \alpha \cdot \operatorname{sign}(\nabla_x L(x + \delta^t, y; \theta))\right)$$
+
+where $\Pi_{\|\cdot\|_\infty \leq \epsilon}$ is the projection onto the $\ell_\infty$ ball of radius $\epsilon$, which simply clips each coordinate: $[\Pi(z)]_i = \operatorname{clip}(z_i, -\epsilon, \epsilon)$.
+
+PGD with $k$ steps uses $k$ gradient evaluations and finds a much stronger adversarial example than FGSM. As $k \to \infty$ with small step size $\alpha$, PGD converges to the true maximum of $L(x+\delta, y;\theta)$ over the $\ell_\infty$ ball.
+
+**PGD as the universal first-order attack.** Any first-order attack that finds $\arg\max_{\|\delta\|_\infty \leq \epsilon} L(x+\delta, y;\theta)$ using gradient information is a special case of projected gradient ascent. PGD is the canonical instance. It is the attack that adversarial training defends against.
+
+---
+
+## 3. Adversarial Training as Minimax Optimization
+
+**Madry's formulation.** To build a robust classifier, train against the worst-case perturbation:
+
+$$\min_\theta \frac{1}{n} \sum_{i=1}^n \max_{\|\delta_i\|_\infty \leq \epsilon} L(x_i + \delta_i, y_i; \theta)$$
+
+This is a **minimax problem**: the outer minimization over $\theta$ (model parameters) and the inner maximization over $\delta_i$ (adversarial perturbations). The inner problem is solved by PGD; the outer problem is solved by gradient descent on $\theta$.
+
+To run gradient descent on the outer objective, we need its gradient with respect to $\theta$. The outer objective is $\phi(\theta) = \frac{1}{n}\sum_i \max_{\|\delta\|_\infty \leq \epsilon} L(x_i+\delta, y_i; \theta)$. How do we differentiate through a maximum?
+
+### Danskin's Theorem
+
+**Theorem (Danskin, 1967).** Let $F(\theta, \delta)$ be continuously differentiable in $\theta$ for each $\delta$, and let $\delta^*(\theta) = \arg\max_{\delta \in \mathcal{C}} F(\theta, \delta)$ be unique. Define $\phi(\theta) = \max_{\delta \in \mathcal{C}} F(\theta, \delta)$. Then $\phi$ is differentiable and:
+
+$$\nabla_\theta \phi(\theta) = \nabla_\theta F(\theta, \delta^*(\theta))$$
+
+*Proof.* For any $\theta'$:
+
+$$\phi(\theta') - \phi(\theta) = \max_\delta F(\theta', \delta) - \max_\delta F(\theta, \delta) \leq F(\theta', \delta^*(\theta)) - F(\theta, \delta^*(\theta))$$
+
+Similarly, $\phi(\theta) - \phi(\theta') \leq F(\theta, \delta^*(\theta')) - F(\theta', \delta^*(\theta'))$.
+
+Since $F$ is differentiable in $\theta$, both bounds yield $\nabla_\theta \phi(\theta) = \nabla_\theta F(\theta, \delta^*(\theta))$ in the limit. $\square$
+
+**Applied to adversarial training:** the gradient of the robust loss with respect to $\theta$ is simply the gradient of the standard loss evaluated at the worst-case perturbation $\delta^*$:
+
+$$\nabla_\theta \phi(\theta) = \nabla_\theta L(x + \delta^*(\theta), y; \theta)$$
+
+This justifies the adversarial training algorithm:
+1. **Find $\delta^*$:** run PGD on the input for $k$ steps (inner maximization)
+2. **Backprop:** compute $\nabla_\theta L(x+\delta^*, y;\theta)$ via standard backpropagation
+3. **Update $\theta$:** take a gradient descent step
+
+Steps 1–3 repeat for each mini-batch. The cost is $k$ times the standard training cost (one PGD step per gradient step on $\theta$), making adversarial training 7–10x slower than standard training in practice.
+
+---
+
+## 4. Catastrophic Overfitting
+
+PGD-based adversarial training is expensive. A natural shortcut: use FGSM (1-step) instead of PGD ($k$-step) for the inner maximization. FGSM is $k\times$ cheaper.
+
+The result is surprising: **catastrophic overfitting (CO)**. When trained with FGSM, models initially gain robustness but then — often suddenly, within a few epochs — lose all robustness against multi-step PGD attacks. The robust accuracy against PGD drops from 40–50% to near 0% while FGSM robust accuracy stays high.
+
+### Why CO Happens: Gradient Misalignment
+
+FGSM works by linearizing the loss:
+
+$$L(x + \delta^{\text{FGSM}}, y; \theta) \approx L(x, y; \theta) + \epsilon \|\nabla_x L(x, y; \theta)\|_1$$
+
+This is a valid approximation when the loss is locally linear. But during adversarial training, the model is shaped to make the loss flat in the FGSM direction — it learns to be robust to the specific perturbation $\delta^{\text{FGSM}}$. This causes the loss landscape to become highly curved (non-linear) in directions not covered by FGSM.
+
+The symptom is **gradient misalignment**: the FGSM direction $\operatorname{sign}(\nabla_x L)$ and the PGD direction (the true worst case) become nearly orthogonal. FGSM training produces a model that is robust to a specific cheap attack but not to the actual threat model.
+
+Formally, measure alignment as:
+
+$$\cos\!\left(\nabla_x L(x, y;\theta),\; \nabla_x L(x+\delta^{\text{FGSM}}, y;\theta)\right)$$
+
+During CO, this cosine similarity drops sharply toward zero — the gradient before and after the FGSM step point in completely different directions.
+
+### GradAlign: Enforcing Local Linearity
+
+**GradAlign** (Andriushchenko & Flammarion, 2020) prevents CO by adding a regularizer that penalizes gradient misalignment:
+
+$$\mathcal{L}_{\text{GradAlign}}(\theta) = L(x + \delta^{\text{FGSM}}, y;\theta) - \lambda \cdot \mathbb{E}_{\delta \sim \mathcal{U}(\mathcal{B}_\epsilon)}\!\left[\cos\!\left(\nabla_x L(x, y;\theta),\; \nabla_x L(x+\delta, y;\theta)\right)\right]$$
+
+The second term rewards high cosine similarity between gradients at $x$ and at nearby perturbed points. When the gradient field is locally consistent (high cosine similarity), the linear approximation underlying FGSM is valid, and FGSM training produces genuinely robust models.
+
+The regularizer adds one extra gradient computation per step but avoids the $k\times$ overhead of full PGD training. GradAlign achieves robust accuracy within 1–2% of PGD training at roughly 2× the cost of standard training.
+
+---
+
+## 5. The Robustness-Accuracy Trade-Off
+
+Adversarial training improves robustness but harms clean accuracy. This is not a failure of specific algorithms — it is a fundamental trade-off.
+
+**Empirical numbers on CIFAR-10:**
+
+| Model | Clean accuracy | Robust accuracy ($\epsilon=8/255$) |
+|---|---|---|
+| Standard training | ~95% | ~0% |
+| Adversarial training (PGD-7) | ~83% | ~56% |
+| Adversarial training (PGD-20) | ~84% | ~58% |
+
+A 12-percentage-point drop in clean accuracy to gain 58% robust accuracy. The gap is not closed by more compute or larger models.
+
+**Geometric intuition.** The Bayes-optimal decision boundary for clean data can pass arbitrarily close to data points — it only needs to be on the correct side. A robust boundary must be far from every point in the worst-case direction, which requires it to be smoother and simpler. These are conflicting requirements when the true decision boundary is complex.
+
+More formally: let $\mathcal{X}^+$ and $\mathcal{X}^-$ be the positive and negative class regions. If these regions are "interleaved" at scale $\epsilon$ (there are positive examples within $\ell_\infty$ distance $\epsilon$ of negative examples), then no classifier can be simultaneously clean-optimal and $\epsilon$-robust. This can happen even in well-separated data when classes have complex geometry.
+
+**Fairness implications.** Adversarial training disproportionately hurts minority classes. Minority classes have fewer samples, so the learned decision boundary near minority class examples is less well-constrained. Robustification moves the boundary conservatively — away from all nearby examples — which can push the boundary into minority class territory. The result: robust accuracy on minority classes degrades more than on majority classes.
+
+This is a fairness problem with no clean solution given current methods. A model that is robustly accurate on the majority class may be fragile or poorly accurate on the minority class.
+
+---
+
+## 6. Open Questions
+
+Three problems remain unresolved:
+
+**Is there a fundamental lower bound on the robustness-accuracy gap?** We know the trade-off exists, but we do not know the Pareto frontier — the best achievable (clean, robust) accuracy pairs. Current theory gives sufficient conditions for a gap but not tight characterizations.
+
+**Can curvature information help?** First-order adversarial training (FGSM, PGD) ignores the curvature of the loss landscape. Second-order methods could potentially find better robust solutions by exploiting the Hessian — but computing the Hessian at scale is prohibitive. Whether diagonal approximations (like those used in Sophia) can help remains an open question.
+
+**What does robustness mean for generative models?** The adversarial framework extends naturally: an adversary perturbs inputs to a generative model to produce harmful outputs. But the "correct output" of a generative model is not a label — it is a distribution. Defining and measuring robustness for generation is an active research area with high practical stakes (adversarial prompting, jailbreaking).
+
+---
+
+## The End of the Series
+
+This post closes the series at the frontier. We started with norms and geometry — the shape of the space — and built upward through gradient descent, stochastic optimization, variance reduction, proximal methods, Frank-Wolfe, subgradients, and into deep learning theory. Each piece connects to the others: the $\ell_\infty$ ball of adversarial examples is the same geometry as the $\ell_1$ norm of Post 1; the minimax problem of adversarial training is solved by the same projected gradient machinery as constrained optimization; Danskin's theorem is a consequence of the convexity theory developed in Posts 1 and 2.
+
+Mathematics of data is not a collection of separate tools. It is one coherent framework, applied at different scales and to different problems.
+
+---
+
+*Part of the Mathematics of Data series — mathematical notes on EE-556 at EPFL.*

@@ -1,0 +1,176 @@
+---
+title: "Implicit Bias: How the Optimizer Secretly Regularizes Your Model"
+date: "2025-03-18"
+series: "Mathematics of Data"
+seriesIndex: 10
+description: "When gradient descent trains an overparameterized model, there are infinitely many solutions with zero training loss. GD quietly picks a specific one — the max-margin classifier for logistic regression, the minimum nuclear norm solution for matrix factorization. This post proves both results and explains the hidden regularizer inside your optimizer."
+tags: ["deep-learning", "implicit-bias", "optimization", "generalization"]
+math: true
+---
+
+Post 9 ended with a question: among the infinitely many solutions that interpolate the training data, which one does gradient descent find?
+
+The answer is not random. Gradient descent has a systematic preference — an **implicit bias** — toward specific solutions that depends on the architecture, the loss, and the optimizer. Remarkably, this bias often aligns with solutions that generalize well, and it requires no explicit regularization to produce.
+
+This post proves two concrete results. First: gradient descent on logistic loss with linearly separable data converges in direction to the hard-margin SVM solution. Second: gradient descent on matrix factorization implicitly minimizes the nuclear norm. Both results say the same thing in different languages — the optimizer is secretly solving a regularized problem you never wrote down.
+
+---
+
+## 1. The Setup: Infinitely Many Solutions
+
+**Linear regression.** When $d > n$, the system $Xw = y$ is underdetermined. The set of solutions is an affine subspace:
+
+$$\mathcal{W} = \{w : Xw = y\} = w_{\text{particular}} + \ker(X)$$
+
+Every point in this affine subspace achieves zero training loss. There is no unique answer.
+
+**Neural networks.** Any network large enough to interpolate $n$ points has a $(p-n)$-dimensional manifold of zero-loss solutions, where $p$ is the number of parameters. For modern networks, $p \gg n$, so this manifold is vast.
+
+The question is not whether a solution exists — it is which solution gradient descent finds, and why that solution tends to generalize.
+
+---
+
+## 2. Linear Classification: GD Converges to the Max-Margin SVM
+
+### Setup
+
+Binary classification on linearly separable data: inputs $x_i \in \mathbb{R}^d$, labels $y_i \in \{-1, +1\}$, and there exists $w^*$ with $y_i \langle w^*, x_i \rangle > 0$ for all $i$.
+
+We train with logistic loss:
+
+$$L(w) = \frac{1}{n}\sum_{i=1}^n \log(1 + e^{-y_i \langle w, x_i \rangle})$$
+
+When data is separable, $L(w) \to 0$ requires $\|w\| \to \infty$ — the weights must grow unboundedly to drive the loss to zero. There is no finite minimizer.
+
+The **hard-margin SVM** finds the max-margin separator:
+
+$$\hat{w} = \arg\min \|w\|_2 \quad \text{subject to} \quad y_i \langle w, x_i \rangle \geq 1 \;\forall i$$
+
+This is a well-posed convex program with a unique solution (in direction). The margin $1/\|\hat{w}\|$ is the distance from the decision boundary to the nearest data point.
+
+### The Theorem
+
+**Theorem (Soudry et al., 2018).** Let $w^k$ be the gradient descent iterates on $L(w)$ with any fixed step size. Then:
+
+$$\frac{w^k}{\|w^k\|} \to \frac{\hat{w}}{\|\hat{w}\|} \qquad \text{as } k \to \infty$$
+
+Gradient descent converges in **direction** to the max-margin SVM solution. Not in magnitude (which diverges), but the direction stabilizes to the unique max-margin separator.
+
+### Proof Sketch
+
+**Step 1: The loss decays and weights grow.** Since data is separable, GD finds a direction of improvement and drives $L(w^k) \to 0$. Since the only way to reduce logistic loss to zero with finite-margin data is to grow $\|w\|$, we have $\|w^k\| \to \infty$.
+
+**Step 2: The gradient is dominated by support vectors.** The gradient of logistic loss is:
+
+$$\nabla L(w) = -\frac{1}{n}\sum_{i=1}^n \frac{y_i x_i}{1 + e^{y_i\langle w,x_i\rangle}}$$
+
+As $\|w\| \to \infty$, for non-support-vector examples $i$ (those with large margin $y_i\langle w, x_i\rangle \gg 0$), the term $e^{y_i\langle w, x_i\rangle}$ is huge, so $\frac{1}{1+e^{y_i\langle w,x_i\rangle}} \approx 0$. These examples contribute negligibly to the gradient.
+
+Only examples near the decision boundary — the support vectors — have non-negligible gradient contributions. The gradient concentrates on the support vectors.
+
+**Step 3: The KKT conditions emerge.** The SVM KKT conditions require the optimal $\hat{w}$ to be a linear combination of support vectors:
+
+$$\hat{w} = \sum_{i \in \mathcal{S}} \alpha_i y_i x_i, \quad \alpha_i \geq 0$$
+
+The GD update direction $-\nabla L(w^k)$ concentrates on support vectors as training progresses. After normalization, the running direction converges to this support-vector combination — which is precisely $\hat{w}/\|\hat{w}\|$.
+
+**The punchline.** Gradient descent on logistic loss, with zero explicit regularization, finds exactly the solution that $\ell_2$-regularized SVM would find in the limit of zero regularization. The implicit regularizer is $\|w\|_2$. The algorithm solves a non-smooth constrained optimization problem (the SVM) while appearing to solve a smooth unconstrained one (logistic regression).
+
+### Why This Matters
+
+This result is not just a curiosity. It says:
+- **Learning rate does not change the implicit bias** (only the speed at which it kicks in)
+- **The same separating hyperplane emerges regardless of initialization** (as long as the data is separable)
+- **Maximum margin = maximum robustness to perturbations** — the SVM solution is the most geometrically stable classifier, which is why it generalizes well
+
+---
+
+## 3. Matrix Factorization: GD Converges to Minimum Nuclear Norm
+
+### Setup
+
+Matrix completion: recover a matrix $M \in \mathbb{R}^{m \times n}$ from observed entries $\Omega$. We parameterize as $W = UV^T$ with $U \in \mathbb{R}^{m \times r}$, $V \in \mathbb{R}^{n \times r}$, and minimize:
+
+$$L(U, V) = \|P_\Omega(UV^T - M)\|_F^2$$
+
+There are infinitely many pairs $(U,V)$ achieving zero loss (for $r$ large enough). They correspond to infinitely many matrices $W = UV^T$ with the same values on $\Omega$.
+
+### The Theorem
+
+**Theorem (Gunasekar et al., 2017).** Gradient descent on $L(U,V)$ initialized at $U_0 = \epsilon I$, $V_0 = \epsilon I$ (small balanced initialization), in the limit $\epsilon \to 0$, converges to:
+
+$$W^* = \arg\min \|W\|_* \quad \text{subject to} \quad P_\Omega(W) = P_\Omega(M)$$
+
+The implicit regularizer is the nuclear norm $\|W\|_*$ — the matrix analogue of $\|w\|_2$ from the classification case.
+
+### Proof Idea
+
+Consider the gradient flow equations:
+
+$$\dot{U} = -\nabla_U L = -2(UV^T - M_\Omega)V, \qquad \dot{V} = -\nabla_V L = -2U^T(UV^T - M_\Omega)$$
+
+Define $W(t) = U(t)V(t)^T$. The induced flow on $W$ is:
+
+$$\dot{W} = \dot{U}V^T + U\dot{V}^T = -2[(UV^T - M_\Omega)VV^T + UU^T(UV^T - M_\Omega)]$$
+
+$$= -2(UU^T + VV^T)(W - M_\Omega)$$
+
+The key observation: the effective "gradient" in $W$-space is preconditioned by $(UU^T + VV^T)$. For the balanced initialization $U_0 = V_0 = \epsilon I$, the matrices $UU^T$ and $VV^T$ are initialized at $\epsilon^2 I$.
+
+As $\epsilon \to 0$, the initial step size in $W$-space goes to zero — the algorithm starts with infinitesimally small steps. This is equivalent to following the steepest descent path in $W$-space with respect to the Riemannian metric induced by the factorization, which is precisely the geodesic that minimizes path length in nuclear norm. The implicit bias toward minimum nuclear norm emerges from the geometry of the factorization, not from any explicit penalty.
+
+**The $\ell_2$ / nuclear norm parallel:**
+
+| Classification (vectors) | Matrix factorization |
+|---|---|
+| $w$ grows unboundedly | $W = UV^T$, direction stabilizes |
+| Implicit bias: $\min \|w\|_2$ | Implicit bias: $\min \|W\|_*$ |
+| Equivalent to max-margin SVM | Equivalent to min-nuclear-norm completion |
+| $\ell_2$ norm = sum of $\lambda_i^2$ | Nuclear norm = sum of $\sigma_i$ |
+
+The factorization structure of the parameterization directly produces the nuclear norm as the implicit regularizer. If you instead parameterized $W$ directly (no factorization), GD would find the minimum Frobenius norm solution — a different implicit bias, and generally worse for low-rank recovery.
+
+---
+
+## 4. Neural Networks: What is the Implicit Bias?
+
+The two results above are exact. For nonlinear neural networks, the story is more complex.
+
+### Deep Linear Networks
+
+For a depth-$L$ linear network $W = W_L W_{L-1} \cdots W_1$, gradient flow on the squared loss converges to the minimum nuclear norm solution of the end-to-end map $W$. This extends the matrix factorization result: the implicit bias is $\min \|W\|_*$, regardless of depth, as long as initialization is balanced and small.
+
+### Nonlinear Networks
+
+For nonlinear networks (ReLU, etc.), the characterization is less clean but the spirit is the same. For **homogeneous networks** (networks where $f(\lambda x; \theta) = \lambda^k f(x; \theta)$ for some $k$), gradient flow on logistic loss converges to a KKT point of the max-margin problem in **function space**:
+
+$$\hat{\theta} = \arg\min_\theta \|\theta\| \quad \text{subject to} \quad y_i f(x_i; \theta) \geq 1 \;\forall i$$
+
+where $\|\theta\|$ is some norm on the parameters. The implicit bias is a norm regularization on the parameters — but *which* norm depends on the architecture.
+
+### What Changes the Implicit Bias?
+
+- **Architecture:** depth of factorization determines which norm is implicit
+- **Loss function:** cross-entropy → max-margin; squared loss → min-norm interpolation
+- **Optimizer:** Adam has a *different* implicit bias from GD. Adam normalizes gradients, implicitly biasing toward solutions with small $\ell_\infty$ norm rather than $\ell_2$ norm
+- **Step size:** larger step size → stronger implicit bias toward low-norm solutions (confirmed empirically for discrete GD)
+- **Initialization:** small initialization strengthens the implicit bias; large initialization weakens it
+
+This last point has a practical implication: **learning rate tuning is implicitly regularization tuning**. When a practitioner adjusts the learning rate to improve generalization, they are adjusting the strength of the implicit regularizer, even if they do not think of it that way.
+
+---
+
+## 5. The Full Picture
+
+Implicit bias explains (partially) the double descent phenomenon from Post 9:
+- Classical theory assumes the function class determines generalization — and for large classes, it predicts poor generalization
+- Modern reality: the optimizer selects a specific element of the function class — the one with minimum norm, maximum margin, or minimum nuclear norm
+- That selected element often has far lower complexity than the worst-case element of the class, which is what Rademacher complexity measures
+
+The missing ingredient in classical theory is the optimization algorithm itself. The algorithm is not just a means to minimize the training loss — it is also, simultaneously, a regularization procedure. The regularization is implicit, architecture-dependent, and often well-matched to the structure of natural data.
+
+What remains open: a complete theory of implicit bias for deep nonlinear networks, and a precise characterization of when the implicit bias aligns with good generalization. These are among the most active research questions in theoretical machine learning today.
+
+---
+
+*Part of the Mathematics of Data series — mathematical notes on EE-556 at EPFL.*
