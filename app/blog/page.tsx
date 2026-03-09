@@ -46,7 +46,7 @@ export default function BlogIndexPage() {
                 {/* Series sections */}
                 {Array.from(seriesMap.entries()).map(([seriesName, seriesPosts]) => {
                     const sorted = [...seriesPosts].sort(
-                        (a, b) => (a.seriesIndex ?? 0) - (b.seriesIndex ?? 0)
+                        (a, b) => (b.seriesIndex ?? 0) - (a.seriesIndex ?? 0)
                     );
 
                     return (
@@ -107,15 +107,9 @@ function PostRow({ post }: { post: ReturnType<typeof getAllPosts>[number] }) {
         >
             {/* Index / date */}
             <div className="shrink-0 w-28">
-                {post.seriesIndex != null ? (
-                    <span className="font-[family-name:var(--font-dm-mono)] text-[10px] uppercase tracking-widest text-[var(--color-accent)]">
-                        Post {post.seriesIndex}
-                    </span>
-                ) : (
-                    <span className="font-[family-name:var(--font-dm-mono)] text-[10px] uppercase tracking-widest text-[var(--color-muted)]">
-                        {formatDate(post.date)}
-                    </span>
-                )}
+                <span className="font-[family-name:var(--font-dm-mono)] text-[10px] uppercase tracking-widest text-[var(--color-muted)]">
+                    {formatDate(post.date)}
+                </span>
             </div>
 
             {/* Content */}

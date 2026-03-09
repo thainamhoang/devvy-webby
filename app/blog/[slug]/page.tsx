@@ -1,39 +1,29 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { MDXRemote } from "next-mdx-remote/rsc";
-import remarkMath from "remark-math";
-import rehypeKatex from "rehype-katex";
-import { getAllPosts, getPostBySlug, getSeriesNeighbors, formatDate } from "@/lib/blog";
-import Prose from "@/components/blog/Prose";
-import type { Metadata } from "next";
-import { renderPost } from "@/lib/blog";
-
-// Import KaTeX CSS globally — add this to your layout.tsx instead if preferred
-import "katex/dist/katex.min.css";
+import { getPostBySlug, getAllPosts, renderPost, formatDate } from "@/lib/blog";
+import TableOfContents from "@/components/blog/TableOfContent";
 
 type Props = { params: Promise<{ slug: string }> };
 
 export async function generateStaticParams() {
-    return getAllPosts().map((p) => ({ slug: p.slug }));
+    const posts = getAllPosts();
+    return posts.map((p) => ({ slug: p.slug }));
 }
 
-export async function generateMetadata({ params }: Props): Promise<Metadata> {
-    const { slug } = await params;
-    const post = getPostBySlug(slug);
-    if (!post) return {};
-    return {
-        title: `${post.title} — Thai-Nam Hoang`,
-        description: post.description,
-    };
+function extractH2s(content: string) {
+    return content
+        .split("\n")
+        .filter((line) => /^##\s/.test(line))
+        .map((line) => {
+            const text = line.replace(/^##\s+/, "").trim();
+            const id = text
+                .toLowerCase()
+                .replace(/[^a-z0-9\s-]/g, "")
+                .trim()
+                .replace(/\s+/g, "-");
+            return { id, text };
+        });
 }
-
-const mdxOptions = {
-    mdxOptions: {
-        remarkPlugins: [remarkMath],
-        rehypePlugins: [[rehypeKatex, { strict: false }]],
-        format: "md" as const,
-    },
-};
 
 export default async function BlogPostPage({ params }: Props) {
     const { slug } = await params;
@@ -41,148 +31,75 @@ export default async function BlogPostPage({ params }: Props) {
     if (!post) notFound();
 
     const html = await renderPost(post.content);
-    const { prev, next } = getSeriesNeighbors(slug);
+    const toc = extractH2s(post.content);
 
     return (
-        <main className="min-h-screen pt-32 pb-24">
-            <div className="max-w-6xl mx-auto px-10 md:px-16">
-                <div className="max-w-3xl mx-auto">
+        <div className="max-w-6xl mx-auto px-10 md:px-16 pt-28 pb-24">
+            <div className="flex gap-16">
 
-                    {/* ── Main content ── */}
-                    <article>
-                        {/* Back link */}
-                        <Link
-                            href="/blog"
-                            className="inline-flex items-center gap-2 font-[family-name:var(--font-dm-mono)] text-[10px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-ink)] transition-colors duration-200 mb-10"
-                        >
-                            ← All posts
-                        </Link>
+                {/* ── Main content — pure server, no hydration issues ── */}
+                <div className="flex-1 min-w-0">
+                    <Link
+                        href="/blog"
+                        className="inline-flex items-center gap-1.5 font-[family-name:var(--font-dm-mono)] text-xs uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-ink)] transition-colors duration-200 mb-10"
+                    >
+                        ← All Posts
+                    </Link>
 
-                        {/* Series badge */}
-                        {post.series && (
-                            <p className="font-[family-name:var(--font-dm-mono)] text-[10px] uppercase tracking-widest text-[var(--color-accent)] mb-3">
-                                {post.series}
-                                {post.seriesIndex != null && ` · Post ${post.seriesIndex}`}
-                            </p>
-                        )}
+                    {post.series && (
+                        <p className="font-[family-name:var(--font-dm-mono)] text-xs uppercase tracking-widest text-[var(--color-accent)] mb-4">
+                            {post.series}
+                        </p>
+                    )}
 
-                        {/* Title */}
-                        <h1 className="font-[family-name:var(--font-fraunces)] text-3xl md:text-4xl lg:text-5xl text-[var(--color-ink)] leading-[1.1] mb-4">
-                            {post.title}
-                        </h1>
+                    <h1 className="font-[family-name:var(--font-fraunces)] text-4xl md:text-5xl leading-[1.1] text-[var(--color-ink)] mb-5">
+                        {post.title}
+                    </h1>
 
-                        {/* Meta row */}
-                        <div className="flex flex-wrap items-center gap-4 mb-8 pb-8 border-b border-[var(--color-border)]">
-                            <span className="font-[family-name:var(--font-dm-mono)] text-xs text-[var(--color-muted)]">
-                                {formatDate(post.date)}
-                            </span>
-                            {post.tags?.map((tag) => (
-                                <span
-                                    key={tag}
-                                    className="font-[family-name:var(--font-dm-mono)] text-[9px] uppercase tracking-widest text-[var(--color-muted)] border border-[var(--color-border)] px-2 py-0.5"
-                                >
-                                    {tag}
-                                </span>
-                            ))}
-                        </div>
-
-                        {/* Body */}
-                        <Prose>
-                            {/* <MDXRemote source={post.content} {...mdxOptions} /> */}
-                            <div dangerouslySetInnerHTML={{ __html: html }} />
-                        </Prose>
-
-                        {/* ── Series navigation ── */}
-                        {(prev || next) && (
-                            <nav className="mt-16 pt-8 border-t border-[var(--color-border)] grid grid-cols-2 gap-4">
-                                <div>
-                                    {prev && (
-                                        <Link
-                                            href={`/blog/${prev.slug}`}
-                                            className="group flex flex-col gap-1"
-                                        >
-                                            <span className="font-[family-name:var(--font-dm-mono)] text-[9px] uppercase tracking-widest text-[var(--color-muted)] group-hover:text-[var(--color-accent)] transition-colors">
-                                                ← Previous
-                                            </span>
-                                            <span className="font-[family-name:var(--font-fraunces)] text-sm text-[var(--color-ink)] group-hover:text-[var(--color-accent)] transition-colors leading-snug">
-                                                {prev.title}
-                                            </span>
-                                        </Link>
-                                    )}
-                                </div>
-                                <div className="text-right">
-                                    {next && (
-                                        <Link
-                                            href={`/blog/${next.slug}`}
-                                            className="group flex flex-col gap-1 items-end"
-                                        >
-                                            <span className="font-[family-name:var(--font-dm-mono)] text-[9px] uppercase tracking-widest text-[var(--color-muted)] group-hover:text-[var(--color-accent)] transition-colors">
-                                                Next →
-                                            </span>
-                                            <span className="font-[family-name:var(--font-fraunces)] text-sm text-[var(--color-ink)] group-hover:text-[var(--color-accent)] transition-colors leading-snug">
-                                                {next.title}
-                                            </span>
-                                        </Link>
-                                    )}
-                                </div>
-                            </nav>
-                        )}
-                    </article>
-                </div>
-            </div>
-        </main>
-    );
-}
-
-/* ── Series sidebar ───────────────────────────────────────────────────────── */
-
-function SeriesSidebar({
-    currentSlug,
-    seriesName,
-}: {
-    currentSlug: string;
-    seriesName: string;
-}) {
-    const all = getAllPosts();
-    const seriesPosts = all
-        .filter((p) => p.series === seriesName && p.seriesIndex != null)
-        .sort((a, b) => (a.seriesIndex ?? 0) - (b.seriesIndex ?? 0));
-
-    if (seriesPosts.length === 0) return null;
-
-    return (
-        <div>
-            <p className="font-[family-name:var(--font-dm-mono)] text-[9px] uppercase tracking-widest text-[var(--color-muted)] mb-3">
-                {seriesName}
-            </p>
-            <ul className="space-y-1">
-                {seriesPosts.map((p) => {
-                    const isCurrent = p.slug === currentSlug;
-                    return (
-                        <li key={p.slug}>
-                            <Link
-                                href={`/blog/${p.slug}`}
-                                className={[
-                                    "flex items-start gap-2 py-1.5 transition-colors duration-200 text-xs leading-snug",
-                                    isCurrent
-                                        ? "text-[var(--color-ink)] font-medium pointer-events-none"
-                                        : "text-[var(--color-muted)] hover:text-[var(--color-ink)]",
-                                ].join(" ")}
+                    <div className="flex flex-wrap items-center gap-3 mb-10">
+                        <span className="font-[family-name:var(--font-dm-mono)] text-xs text-[var(--color-muted)]">
+                            {formatDate(post.date)}
+                        </span>
+                        {post.tags?.map((tag) => (
+                            <span
+                                key={tag}
+                                className="font-[family-name:var(--font-dm-mono)] text-[10px] uppercase tracking-widest px-2 py-0.5 border border-[var(--color-border)] text-[var(--color-muted)]"
                             >
-                                <span className="font-[family-name:var(--font-dm-mono)] text-[9px] text-[var(--color-accent)] shrink-0 mt-0.5 w-4">
-                                    {p.seriesIndex}
-                                </span>
-                                <span className={isCurrent ? "font-[family-name:var(--font-fraunces)]" : ""}>
-                                    {p.title}
-                                </span>
-                                {isCurrent && (
-                                    <span className="ml-auto shrink-0 w-1 h-1 rounded-full bg-[var(--color-accent)] mt-1.5" />
-                                )}
-                            </Link>
-                        </li>
-                    );
-                })}
-            </ul>
+                                {tag}
+                            </span>
+                        ))}
+                    </div>
+
+                    <hr className="border-[var(--color-border)] mb-10" />
+
+                    <div
+                        className="prose-content font-[family-name:var(--font-lora)] text-[var(--color-ink)] leading-relaxed
+                            [&_h2]:font-[family-name:var(--font-fraunces)] [&_h2]:text-2xl [&_h2]:font-normal [&_h2]:text-[var(--color-ink)] [&_h2]:mt-12 [&_h2]:mb-4 [&_h2]:pb-2 [&_h2]:border-b [&_h2]:border-[var(--color-border)]
+                            [&_h3]:font-[family-name:var(--font-fraunces)] [&_h3]:text-lg [&_h3]:font-normal [&_h3]:text-[var(--color-ink)] [&_h3]:mt-8 [&_h3]:mb-3
+                            [&_p]:mb-5 [&_p]:text-base
+                            [&_strong]:text-[var(--color-ink)] [&_strong]:font-semibold
+                            [&_em]:italic
+                            [&_ul]:mb-5 [&_ul]:pl-5 [&_ul>li]:mb-1.5 [&_ul>li]:list-disc [&_ul>li]:marker:text-[var(--color-accent)]
+                            [&_ol]:mb-5 [&_ol]:pl-5 [&_ol>li]:mb-1.5 [&_ol>li]:list-decimal
+                            [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--color-accent)] [&_blockquote]:pl-4 [&_blockquote]:text-[var(--color-muted)] [&_blockquote]:italic [&_blockquote]:my-6
+                            [&_code]:font-[family-name:var(--font-dm-mono)] [&_code]:text-sm [&_code]:bg-[var(--color-ink)]/5 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded-sm
+                            [&_pre]:bg-[var(--color-ink)]/[0.04] [&_pre]:border [&_pre]:border-[var(--color-border)] [&_pre]:rounded-sm [&_pre]:p-5 [&_pre]:overflow-x-auto [&_pre]:my-6 [&_pre>code]:bg-transparent [&_pre>code]:p-0
+                            [&_table]:w-full [&_table]:my-6 [&_table]:text-sm [&_table]:border-collapse
+                            [&_th]:font-[family-name:var(--font-dm-mono)] [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-widest [&_th]:text-[var(--color-muted)] [&_th]:text-left [&_th]:pb-2 [&_th]:border-b [&_th]:border-[var(--color-border)]
+                            [&_td]:py-2 [&_td]:pr-4 [&_td]:border-b [&_td]:border-[var(--color-border)]/50
+                            [&_tr:last-child_td]:border-b-0
+                            [&_hr]:border-[var(--color-border)] [&_hr]:my-10
+                            [&_a]:text-[var(--color-ink)] [&_a]:underline [&_a]:underline-offset-4 [&_a]:decoration-[var(--color-border)] hover:[&_a]:decoration-[var(--color-accent)]
+                            [&_.katex-display]:overflow-x-auto [&_.katex-display]:py-2
+                        "
+                        dangerouslySetInnerHTML={{ __html: html }}
+                    />
+                </div>
+
+                {/* ── TOC: isolated client component, won't affect server HTML ── */}
+                <TableOfContents toc={toc} />
+
+            </div>
         </div>
     );
 }

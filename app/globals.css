@@ -29,3 +29,9 @@ body {
     overflow-x: auto;
     padding: 1rem 0;
 }
+
+.prose-content h2,
+.prose-content h3,
+.prose-content h4 {
+    scroll-margin-top: 96px;
+}
